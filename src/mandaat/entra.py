@@ -1,0 +1,155 @@
+"""Entra Agent ID-variant: tokens voor de agent via de agent-OBO-flow, en claimnormalisatie.
+
+Implementatie met gemockte tests, niet tegen een tenant gevalideerd. Protocol volgens
+learn.microsoft.com/entra/agent-id/agent-on-behalf-of-oauth-flow (geraadpleegd 17-10-2026):
+
+1. Managed identity-token met audience `api://AzureADTokenExchange` (geen geheim).
+2. Blueprint-token T1: `client_credentials` met `fmi_path` = de agent identity en het
+   managed identity-token als `client_assertion`.
+3. Resource-token: de agent identity doet `jwt-bearer` met `requested_token_use=on_behalf_of`,
+   het gebruikerstoken als `assertion` (audience = de blueprint) en T1 als `client_assertion`.
+
+Verschil met Keycloak: Entra zet de delegatie niet in `act`. De agent staat in `azp`, de
+medewerker in `oid`, en de facetclaims `xms_act_fct` en `xms_sub_fct` geven de rollen aan.
+"""
+
+from __future__ import annotations
+
+import os
+from dataclasses import dataclass
+from typing import Any
+
+import httpx2
+
+UITWISSEL_AUDIENCE = "api://AzureADTokenExchange"
+ASSERTION_TYPE = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
+JWT_BEARER = "urn:ietf:params:oauth:grant-type:jwt-bearer"
+
+
+class EntraFout(RuntimeError):
+    """Entra weigerde een tokenverzoek; de tekst bevat de AADSTS-foutcode."""
+
+
+@dataclass(frozen=True)
+class EntraAgent:
+    """Configuratie van één agent identity.
+
+    Attributes:
+        tenant_id: Tenant van de agent.
+        blueprint_id: client_id van de agent identity blueprint.
+        agent_id: client_id van de agent identity.
+        managed_identity_client_id: client_id van de user-assigned managed identity.
+    """
+
+    tenant_id: str
+    blueprint_id: str
+    agent_id: str
+    managed_identity_client_id: str
+
+    @property
+    def token_endpoint(self) -> str:
+        """Token-endpoint van de tenant."""
+        return f"https://login.microsoftonline.com/{self.tenant_id}/oauth2/v2.0/token"
+
+
+def _post(url: str, data: dict[str, str]) -> dict[str, Any]:
+    antwoord = httpx2.post(url, data=data, timeout=30)
+    if antwoord.status_code != 200:
+        raise EntraFout(f"tokenverzoek geweigerd ({antwoord.status_code}): {antwoord.text[:300]}")
+    return antwoord.json()
+
+
+def managed_identity_token(client_id: str) -> str:
+    """Managed identity-token voor de token exchange (Container Apps, App Service of IMDS)."""
+    endpoint, header = os.environ.get("IDENTITY_ENDPOINT"), os.environ.get("IDENTITY_HEADER")
+    params = {"resource": UITWISSEL_AUDIENCE, "client_id": client_id}
+    if endpoint and header:
+        antwoord = httpx2.get(
+            endpoint,
+            params={**params, "api-version": "2019-08-01"},
+            headers={"X-IDENTITY-HEADER": header},
+            timeout=10,
+        )
+    else:
+        antwoord = httpx2.get(
+            "http://169.254.169.254/metadata/identity/oauth2/token",
+            params={**params, "api-version": "2018-02-01"},
+            headers={"Metadata": "true"},
+            timeout=10,
+        )
+    if antwoord.status_code != 200:
+        raise EntraFout(f"managed identity-token niet beschikbaar: {antwoord.text[:200]}")
+    return antwoord.json()["access_token"]
+
+
+def blueprint_token(agent: EntraAgent, mi_token: str) -> str:
+    """Stap 2: T1, het token van de blueprint dat namens deze agent identity mag uitwisselen."""
+    return _post(
+        agent.token_endpoint,
+        {
+            "client_id": agent.blueprint_id,
+            "scope": f"{UITWISSEL_AUDIENCE}/.default",
+            "fmi_path": agent.agent_id,
+            "client_assertion_type": ASSERTION_TYPE,
+            "client_assertion": mi_token,
+            "grant_type": "client_credentials",
+        },
+    )["access_token"]
+
+
+def namens_medewerker(agent: EntraAgent, t1: str, gebruikerstoken: str, scope: str) -> str:
+    """Stap 3: resource-token van de agent identity namens de medewerker (agent-OBO).
+
+    Args:
+        agent: Configuratie van de agent.
+        t1: Blueprint-token uit stap 2.
+        gebruikerstoken: Token van de medewerker met als audience de blueprint.
+        scope: Eén gedelegeerde scope, bijvoorbeeld `api://<dossier-api>/dossier.lezen`.
+
+    Returns:
+        Het access token voor de dossier-API.
+    """
+    return _post(
+        agent.token_endpoint,
+        {
+            "client_id": agent.agent_id,
+            "scope": scope,
+            "client_assertion_type": ASSERTION_TYPE,
+            "client_assertion": t1,
+            "grant_type": JWT_BEARER,
+            "assertion": gebruikerstoken,
+            "requested_token_use": "on_behalf_of",
+        },
+    )["access_token"]
+
+
+@dataclass(frozen=True)
+class Delegatie:
+    """Providerneutrale weergave van een gedelegeerd token."""
+
+    medewerker: str
+    agent: str
+    scopes: frozenset[str]
+
+
+def normaliseer_keycloak(claims: dict[str, Any]) -> Delegatie:
+    """Keycloak: delegatie staat in `act` (RFC 8693)."""
+    actor = claims.get("act")
+    if not isinstance(actor, dict) or "client_id" not in actor:
+        raise ValueError("geen gedelegeerd token: act ontbreekt")
+    return Delegatie(claims["sub"], actor["client_id"], frozenset(str(claims["scope"]).split()))
+
+
+def normaliseer_entra(claims: dict[str, Any], toegelaten_agents: frozenset[str]) -> Delegatie:
+    """Entra Agent ID: agent in `azp`, medewerker in `oid`, scopes in `scp`.
+
+    Een app-only token (zonder `scp`) of een token zonder actorfacet is geen delegatie en wordt
+    geweigerd; de agent mag in deze opzet nooit zonder medewerker handelen.
+    """
+    if "xms_act_fct" not in claims:
+        raise ValueError("geen agenttoken: xms_act_fct ontbreekt")
+    if not claims.get("scp"):
+        raise ValueError("app-only token: geen gedelegeerde scopes, dus geen medewerker")
+    if claims.get("azp") not in toegelaten_agents:
+        raise ValueError(f"agent {claims.get('azp')} is niet toegelaten")
+    return Delegatie(claims["oid"], claims["azp"], frozenset(str(claims["scp"]).split()))
