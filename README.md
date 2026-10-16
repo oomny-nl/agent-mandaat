@@ -2,7 +2,7 @@
 
 [English version](README.en.md)
 
-![Een dossierassistent werkt namens een medewerker, binnen een afgebakend mandaat](docs/beeld/kop.png)
+![Een dossierassistent werkt namens een medewerker, binnen een afgebakend mandaat](docs/beeld/kop.jpg)
 
 Een AI-agent bij een gemeente die dossiers mag lezen en notities mag schrijven, namens één
 medewerker, voor één taak, en verder niets. Deze repo laat zien hoe je dat afdwingt met

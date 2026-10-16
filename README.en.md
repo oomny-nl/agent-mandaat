@@ -2,7 +2,7 @@
 
 [Nederlandse versie](README.md)
 
-![A case assistant acts on behalf of a caseworker, within a bounded mandate](docs/beeld/kop.png)
+![A case assistant acts on behalf of a caseworker, within a bounded mandate](docs/beeld/kop.jpg)
 
 An AI agent at a municipality that may read case files and write notes on behalf of one
 caseworker, for one task, and nothing else. This repo shows how to enforce that with standard
