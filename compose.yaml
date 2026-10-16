@@ -8,6 +8,7 @@ x-omgeving: &omgeving
   GEHEIMEN_DIR: /geheimen
   DB_PAD: /data/mandaat.db
   MAX_SKEW: "2"
+  TZ: Europe/Amsterdam
 
 x-app: &app
   build: .
@@ -76,6 +77,7 @@ services:
       KC_BOOTSTRAP_ADMIN_PASSWORD: ${KC_BOOTSTRAP_ADMIN_PASSWORD:?Kopieer .env.example naar .env}
       DEMO_BREEDTE: ${DEMO_BREEDTE:-100}
       PLANNER: ${PLANNER:-deterministisch}
+      DEMO_TEMPO: ${DEMO_TEMPO:-0}
     volumes:
       - geheimen:/geheimen:ro
       - data:/data:ro
