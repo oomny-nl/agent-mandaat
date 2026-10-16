@@ -165,7 +165,10 @@ def valideer_bewijs(
         sleutel = ECAlgorithm.from_jwk(json.dumps(jwk))
         if not isinstance(sleutel, ec.EllipticCurvePublicKey):
             raise DPoPFout("DPoP-kop bevat geen publieke sleutel")
-        claims = jwt.decode(bewijs, sleutel, algorithms=list(TOEGESTANE_ALGORITMEN))
+        # iat controleren we zelf (met een eigen venster en een duidelijke foutmelding).
+        claims = jwt.decode(
+            bewijs, sleutel, algorithms=list(TOEGESTANE_ALGORITMEN), options={"verify_iat": False}
+        )
     except (jwt.PyJWTError, ValueError) as fout:
         raise DPoPFout(f"handtekening DPoP-bewijs ongeldig: {fout}") from fout
     _controleer_claims(claims, htm, htu, access_token)

@@ -12,6 +12,7 @@ import json
 import os
 import sys
 import time
+from collections.abc import Generator
 from typing import Any
 
 import httpx2
@@ -55,24 +56,38 @@ def wacht_op_keycloak(inst: Instellingen, timeout_s: int = 180) -> None:
     raise BootstrapFout(f"Keycloak op {inst.keycloak_url} niet bereikbaar na {timeout_s} s")
 
 
-def admin_client(inst: Instellingen, gebruiker: str, wachtwoord: str) -> httpx2.Client:
-    """Client voor de Admin REST API, aangemeld via de master-realm."""
-    antwoord = httpx2.post(
-        f"{inst.keycloak_url}/realms/master/protocol/openid-connect/token",
-        data={
+class _BeheerAuth(httpx2.Auth):
+    """Vraagt een nieuw beheertoken aan zodra het vorige bijna verlopen is (60 s in master)."""
+
+    def __init__(self, inst: Instellingen, gebruiker: str, wachtwoord: str) -> None:
+        self._url = f"{inst.keycloak_url}/realms/master/protocol/openid-connect/token"
+        self._gegevens = {
             "grant_type": "password",
             "client_id": "admin-cli",
             "username": gebruiker,
             "password": wachtwoord,
-        },
-        timeout=30,
-    )
-    token = _controleer(antwoord, "aanmelden als beheerder").json()["access_token"]
-    return httpx2.Client(
-        base_url=f"{inst.keycloak_url}/admin/realms",
-        headers={"Authorization": f"Bearer {token}"},
-        timeout=30,
-    )
+        }
+        self._token: tuple[str, float] | None = None
+
+    def _geldig_token(self) -> str:
+        if self._token is None or self._token[1] < time.time() + 10:
+            antwoord = _controleer(
+                httpx2.post(self._url, data=self._gegevens, timeout=30), "aanmelden als beheerder"
+            ).json()
+            self._token = (antwoord["access_token"], time.time() + int(antwoord["expires_in"]))
+        return self._token[0]
+
+    def auth_flow(self, request: httpx2.Request) -> Generator[httpx2.Request, httpx2.Response]:
+        """Zet een geldig beheertoken op het verzoek."""
+        request.headers["Authorization"] = f"Bearer {self._geldig_token()}"
+        yield request
+
+
+def admin_client(inst: Instellingen, gebruiker: str, wachtwoord: str) -> httpx2.Client:
+    """Client voor de Admin REST API, aangemeld via de master-realm (vernieuwt zelf)."""
+    auth = _BeheerAuth(inst, gebruiker, wachtwoord)
+    auth._geldig_token()  # meteen aanmelden, zodat een fout wachtwoord direct opvalt
+    return httpx2.Client(base_url=f"{inst.keycloak_url}/admin/realms", auth=auth, timeout=30)
 
 
 def _audience_mapper(doel: str) -> dict[str, Any]:

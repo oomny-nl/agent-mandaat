@@ -86,7 +86,7 @@ services:
   tests:
     <<: *app
     profiles: ["tests"]
-    command: ["pytest", "-m", "integratie", "-v"]
+    command: ["pytest", "-m", "integratie", "-v", "-p", "no:cacheprovider"]
     environment:
       <<: *omgeving
       KC_BOOTSTRAP_ADMIN_PASSWORD: ${KC_BOOTSTRAP_ADMIN_PASSWORD:?Kopieer .env.example naar .env}

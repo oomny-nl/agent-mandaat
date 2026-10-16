@@ -92,7 +92,9 @@ def _laat_toe(dienst: Dienst, claims: dict[str, Any], tool: str, dossier: str) -
     """Volledige toelating van een toolactie; geeft de gebruikersnaam van de medewerker."""
     scope = TOOLSCOPES[tool]
     if scope == "besluit:nemen":
-        reden, mandaat, gebruiker = "gedelegeerde_partij_legt_geen_besluit_vast", None, None
+        reden = "gedelegeerde_partij_legt_geen_besluit_vast"
+        mandaat = dienst.opslag.actief_mandaat(claims["sub"], claims["act"]["client_id"])
+        gebruiker = dienst.opslag.gebruiker_voor_sub(claims["sub"])
     else:
         toelating = dienst.opslag.laat_toe(claims, dossier)
         reden, mandaat = toelating.reden, toelating.mandaat_id

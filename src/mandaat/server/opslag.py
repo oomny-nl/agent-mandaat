@@ -158,13 +158,23 @@ class Opslag:
             return Toelating(False, "geen_mandaat")
         if rij["status"] != "actief":
             return Toelating(False, f"mandaat_{rij['status']}", rij["id"])
-        if claims["iat"] < rij["verleend_om"] - self.max_skew:
+        # iat heeft secondenresolutie. Vóór de registratieseconde: een eerder mandaat.
+        # Vanaf die seconde tot geldig_vanaf: fail closed, nog niet geldig.
+        if claims["iat"] < math.floor(rij["verleend_om"]):
             return Toelating(False, "token_uit_eerder_mandaat", rij["id"])
         if claims["iat"] < rij["geldig_vanaf"]:
             return Toelating(False, "mandaat_nog_niet_geldig", rij["id"])
         if dossier != rij["dossier"]:
             return Toelating(False, "dossier_buiten_mandaat", rij["id"])
         return Toelating(True, "binnen_mandaat", rij["id"])
+
+    def actief_mandaat(self, sub: str, agent: str) -> str | None:
+        """Id van het actieve mandaat van deze medewerker en agent, voor het auditrecord."""
+        rij = self._db.execute(
+            "SELECT id FROM mandaten WHERE medewerker = ? AND agent = ? AND status = 'actief'",
+            (sub, agent),
+        ).fetchone()
+        return rij["id"] if rij else None
 
     def gebruiker_voor_sub(self, sub: str) -> str | None:
         """Gebruikersnaam bij een `sub`, bekend uit een eerder verleend mandaat."""
