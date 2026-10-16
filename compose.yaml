@@ -1,0 +1,102 @@
+# Lokale demoketen: Keycloak, inrichting, dossier-API (MCP) en, op verzoek, demo en tests.
+# Start alles met: make demo
+name: agent-mandaat
+
+x-omgeving: &omgeving
+  KEYCLOAK_URL: http://keycloak:8080
+  RESOURCE_URL: http://dossier-mcp:8000/mcp
+  GEHEIMEN_DIR: /geheimen
+  DB_PAD: /data/mandaat.db
+  MAX_SKEW: "2"
+
+x-app: &app
+  build: .
+  image: agent-mandaat:lokaal
+
+services:
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.8.1@sha256:79c623a22abacf3fe6c00a5fb30f5b7843d717b234033b80995891c06116d244
+    command:
+      - start-dev
+      - --features=token-exchange-delegation,parameterized-scopes,admin-fine-grained-authz:v2
+      - --health-enabled=true
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KC_BOOTSTRAP_ADMIN_PASSWORD:?Kopieer .env.example naar .env}
+    ports:
+      - "127.0.0.1:8080:8080"
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          exec 3<>/dev/tcp/127.0.0.1/9000 &&
+          printf 'GET /health/ready HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n' >&3 &&
+          grep -q '"UP"' <&3
+      interval: 5s
+      timeout: 5s
+      retries: 40
+      start_period: 10s
+
+  init:
+    <<: *app
+    command: ["mandaat-bootstrap"]
+    environment:
+      <<: *omgeving
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KC_BOOTSTRAP_ADMIN_PASSWORD:?Kopieer .env.example naar .env}
+    volumes:
+      - geheimen:/geheimen
+    depends_on:
+      keycloak:
+        condition: service_healthy
+
+  dossier-mcp:
+    <<: *app
+    command: ["mandaat-server"]
+    environment: *omgeving
+    volumes:
+      - geheimen:/geheimen:ro
+      - data:/data
+    ports:
+      - "127.0.0.1:8000:8000"
+    depends_on:
+      init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
+      interval: 3s
+      timeout: 5s
+      retries: 20
+
+  demo:
+    <<: *app
+    profiles: ["demo"]
+    command: ["mandaat-demo"]
+    environment:
+      <<: *omgeving
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KC_BOOTSTRAP_ADMIN_PASSWORD:?Kopieer .env.example naar .env}
+      DEMO_BREEDTE: ${DEMO_BREEDTE:-100}
+      PLANNER: ${PLANNER:-deterministisch}
+    volumes:
+      - geheimen:/geheimen:ro
+      - data:/data:ro
+    depends_on:
+      dossier-mcp:
+        condition: service_healthy
+
+  tests:
+    <<: *app
+    profiles: ["tests"]
+    command: ["pytest", "-m", "integratie", "-v"]
+    environment:
+      <<: *omgeving
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KC_BOOTSTRAP_ADMIN_PASSWORD:?Kopieer .env.example naar .env}
+    volumes:
+      - geheimen:/geheimen:ro
+      - data:/data:ro
+    depends_on:
+      dossier-mcp:
+        condition: service_healthy
+
+volumes:
+  geheimen:
+  data:
