@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import math
+import sqlite3
 import time
 import uuid
 from collections.abc import Iterator
@@ -309,3 +311,36 @@ def test_misvormd_verzoek_zonder_token(inst: Instellingen) -> None:
     assert antwoord.status_code == 401
     groot = httpx2.post(inst.resource_url, content=b"x" * 70000, headers=MCP_KOPPEN, timeout=10)
     assert groot.status_code == 413
+
+
+def _audit(inst: Instellingen) -> list[dict[str, Any]]:
+    db = sqlite3.connect(f"file:{inst.db_pad}?mode=ro", uri=True)
+    return [json.loads(r[0]) for r in db.execute("SELECT record FROM audit ORDER BY nr")]
+
+
+def test_beheerweigeringen_staan_in_de_audit(
+    verleen: Any, inst: Instellingen, geheimen: Geheimen
+) -> None:
+    """Bram trekt het mandaat van Sanne in: 404, en de weigering staat met zijn naam in de audit."""
+    sanne = verleen()
+    bram = Werkplek(inst, "bram", geheimen.wachtwoord("bram"))
+    bram.login("2026-0142")
+    try:
+        api = inst.resource_url.rsplit("/", 1)[0]
+        antwoord = httpx2.delete(
+            f"{api}/mandaten/{sanne.mandaat['id']}",
+            headers={"Authorization": f"Bearer {bram.beheertoken()}"},
+            timeout=10,
+        )
+        assert antwoord.status_code == 404
+    finally:
+        bram.log_uit()
+    records = _audit(inst)
+    assert any(
+        r.get("laag") == "api-beheer"
+        and r.get("gebruiker") == "bram"
+        and r["beslissing"] == "geweigerd"
+        and sanne.mandaat["id"] in str(r.get("tool"))
+        for r in records
+    )
+    assert any("sessie van een eerder mandaat" in str(r.get("reden")) for r in records)

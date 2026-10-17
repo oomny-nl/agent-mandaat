@@ -24,7 +24,7 @@ from starlette.responses import JSONResponse, Response
 from mandaat.config import Instellingen
 from mandaat.geheimen import Geheimen
 from mandaat.server.gegevens import DOSSIERS, mag_zelf
-from mandaat.server.opslag import Opslag
+from mandaat.server.opslag import HistorieGewijzigd, Opslag
 from mandaat.server.poort import Agentpoort, challenge
 from mandaat.server.tokens import Gecontroleerd, Tokencontrole, TokenFout
 
@@ -234,68 +234,86 @@ def _beheerroutes(mcp: MCPServer, dienst: Dienst) -> None:
         )
 
 
-def _trek_in(dienst: Dienst, claims: dict[str, Any], mandaat_id: str) -> Response:
-    if not dienst.opslag.trek_in(mandaat_id, claims["sub"]):
-        return JSONResponse({"error": "geen actief mandaat van deze medewerker"}, status_code=404)
+def _beheer(dienst: Dienst, claims: dict[str, Any], beslissing: str, **velden: Any) -> None:
+    """Auditrecord voor elk beheerverzoek, ook als het wordt geweigerd."""
     dienst.opslag.audit(
         {
             "laag": "api-beheer",
-            "beslissing": "mandaat_ingetrokken",
-            "mandaat": mandaat_id,
-            "medewerker": claims["sub"],
+            "beslissing": beslissing,
+            "medewerker": claims.get("sub"),
             "gebruiker": claims.get("preferred_username"),
+            **velden,
         }
     )
+
+
+def _weiger_beheer(
+    dienst: Dienst, claims: dict[str, Any], handeling: str, reden: str, status: int
+) -> Response:
+    _beheer(dienst, claims, "geweigerd", tool=handeling, reden=reden, dossier=claims.get("taak"))
+    return JSONResponse({"error": reden}, status_code=status)
+
+
+def _trek_in(dienst: Dienst, claims: dict[str, Any], mandaat_id: str) -> Response:
+    if not dienst.opslag.trek_in(mandaat_id, claims["sub"]):
+        reden = "geen actief mandaat van deze medewerker"
+        return _weiger_beheer(dienst, claims, f"mandaat intrekken {mandaat_id}", reden, 404)
+    _beheer(dienst, claims, "mandaat_ingetrokken", mandaat=mandaat_id)
     return JSONResponse({"mandaat": mandaat_id, "status": "ingetrokken"})
+
+
+def _sessies_beeindigd(dienst: Dienst, sub: str) -> tuple[set[str] | None, str, int]:
+    """Eerdere sessies als die bij Keycloak alle beëindigd zijn, anders (None, reden, status)."""
+    eerder = dienst.opslag.eerdere_sessies(sub, dienst.inst.agent_id)
+    try:
+        nog_actief = eerder & dienst.controle.actieve_sessies(sub)
+    except TokenFout as fout:
+        return None, fout.reden, fout.status
+    if nog_actief:
+        return None, "de sessie van een eerder mandaat is nog actief; log die eerst uit", 409
+    return eerder, "", 0
 
 
 def _verleen(dienst: Dienst, claims: dict[str, Any]) -> Response:
     gebruiker, taak, sid = claims.get("preferred_username"), claims.get("taak"), claims.get("sid")
+    handeling = "mandaat verlenen"
     if not (gebruiker and taak and sid):
-        return JSONResponse(
-            {"error": "token mist preferred_username, taak of sid"}, status_code=400
+        return _weiger_beheer(
+            dienst, claims, handeling, "token mist preferred_username, taak of sid", 400
         )
     reden = mag_zelf(gebruiker, "dossier:lezen", taak)
     if reden:
-        return JSONResponse({"error": f"geen mandaat mogelijk: {reden}"}, status_code=403)
+        return _weiger_beheer(dienst, claims, handeling, f"geen mandaat mogelijk: {reden}", 403)
+    gegevens = {
+        "medewerker": claims["sub"],
+        "gebruiker": gebruiker,
+        "naam": claims.get("name", ""),
+        "agent": dienst.inst.agent_id,
+        "dossier": taak,
+        "sid": sid,
+    }
     # De delegatiebron van eerdere mandaten moet echt weg zijn: hun Keycloak-sessies zijn beëindigd.
-    # Anders kan de agent met een oud subject token nieuwe tokens halen onder dit nieuwe mandaat.
-    try:
-        nog_actief = dienst.opslag.eerdere_sessies(
-            claims["sub"], dienst.inst.agent_id
-        ) & dienst.controle.actieve_sessies(claims["sub"])
-    except TokenFout as fout:
-        return JSONResponse({"error": fout.reden}, status_code=fout.status)
-    if nog_actief:
-        return JSONResponse(
-            {"error": "de sessie van een eerder mandaat is nog actief; log die eerst uit"},
-            status_code=409,
+    # De registratie controleert in haar transactie dat de historie sindsdien niet veranderde.
+    for _ in range(3):
+        eerder, reden, status = _sessies_beeindigd(dienst, claims["sub"])
+        if eerder is None:
+            return _weiger_beheer(dienst, claims, handeling, reden, status)
+        try:
+            mandaat = dienst.opslag.registreer_mandaat(gegevens, eerder)
+        except HistorieGewijzigd:
+            continue
+        except ValueError as fout:
+            return _weiger_beheer(dienst, claims, handeling, str(fout), 409)
+        _beheer(
+            dienst,
+            claims,
+            "mandaat_verleend",
+            mandaat=mandaat["id"],
+            agent=dienst.inst.agent_id,
+            dossier=taak,
         )
-    try:
-        mandaat = dienst.opslag.registreer_mandaat(
-            {
-                "medewerker": claims["sub"],
-                "gebruiker": gebruiker,
-                "naam": claims.get("name", ""),
-                "agent": dienst.inst.agent_id,
-                "dossier": taak,
-                "sid": sid,
-            }
-        )
-    except ValueError as fout:
-        return JSONResponse({"error": str(fout)}, status_code=409)
-    dienst.opslag.audit(
-        {
-            "laag": "api-beheer",
-            "beslissing": "mandaat_verleend",
-            "mandaat": mandaat["id"],
-            "medewerker": claims["sub"],
-            "gebruiker": gebruiker,
-            "agent": dienst.inst.agent_id,
-            "dossier": taak,
-        }
-    )
-    return JSONResponse(mandaat, status_code=201)
+        return JSONResponse(mandaat, status_code=201)
+    return _weiger_beheer(dienst, claims, handeling, "mandaathistorie bleef wijzigen", 409)
 
 
 def _besluit(dienst: Dienst, claims: dict[str, Any], dossier: str, uitkomst: str) -> Response:

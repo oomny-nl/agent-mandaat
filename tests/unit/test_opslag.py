@@ -12,7 +12,13 @@ from typing import Any
 
 import pytest
 
-from mandaat.server.opslag import Opslag, controleer_keten, controleer_tegen_anker, lees_anker
+from mandaat.server.opslag import (
+    HistorieGewijzigd,
+    Opslag,
+    controleer_keten,
+    controleer_tegen_anker,
+    lees_anker,
+)
 
 ISS = "http://keycloak:8080/realms/lindevoort"
 
@@ -23,6 +29,7 @@ def opslag(tmp_path: Path) -> Opslag:
 
 
 def mandaat(opslag: Opslag, dossier: str = "2026-0142", sid: str | None = None) -> dict[str, Any]:
+    gecontroleerd = opslag.eerdere_sessies("sub-sanne", "dossierassistent")
     return opslag.registreer_mandaat(
         {
             "medewerker": "sub-sanne",
@@ -31,7 +38,8 @@ def mandaat(opslag: Opslag, dossier: str = "2026-0142", sid: str | None = None) 
             "agent": "dossierassistent",
             "dossier": dossier,
             "sid": sid or str(uuid.uuid4()),
-        }
+        },
+        gecontroleerd,
     )
 
 
@@ -222,3 +230,30 @@ def test_dpop_eenmalig_onder_gelijktijdige_lees_en_schrijfacties(opslag: Opslag)
         d.join()
     assert fouten == []
     assert uitkomsten.count(True) == 1
+
+
+def test_registratie_met_verouderde_sessiecontrole(opslag: Opslag) -> None:
+    """Race: tussen sessiecontrole en registratie kwam er een mandaat bij; registratie stopt."""
+    verouderd = opslag.eerdere_sessies("sub-sanne", "dossierassistent")
+    a = mandaat(opslag, sid="sessie-a")
+    opslag.trek_in(a["id"], "sub-sanne")
+    gegevens = {
+        "medewerker": "sub-sanne",
+        "gebruiker": "sanne",
+        "naam": "",
+        "agent": "dossierassistent",
+        "dossier": "2026-0143",
+        "sid": "sessie-b",
+    }
+    with pytest.raises(HistorieGewijzigd):
+        opslag.registreer_mandaat(gegevens, verouderd)
+
+
+def test_ontbrekend_of_leeg_anker_is_geen_bewijs(tmp_path: Path) -> None:
+    opslag = _met_anker(tmp_path)
+    opslag.audit({"beslissing": "toegestaan"})
+    records = opslag.auditlog()
+    assert controleer_tegen_anker(records, None)[0] is False
+    assert controleer_tegen_anker(records, [])[0] is False
+    assert controleer_tegen_anker([], None) == (True, "intact")
+    assert lees_anker(tmp_path / "bestaat-niet.log") is None

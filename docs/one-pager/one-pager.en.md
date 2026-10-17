@@ -41,7 +41,7 @@ over MCP on the case API of a fictional municipality. In the second scenario the
 simulates an agent that follows an instruction injected into a case file, and the boundary holds: Keycloak refuses the token
 for a decision, and the API refuses the case outside the mandate.
 
-50 integration tests against the real stack. A threat model against the OWASP Top 10 for Agentic
+51 integration tests against the real stack. A threat model against the OWASP Top 10 for Agentic
 Applications 2026 and the OWASP Non-Human Identities Top 10, with the test behind each control.
 An honest section on what this does not solve.
 

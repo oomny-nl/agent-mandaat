@@ -27,7 +27,7 @@ make demo
 
 This starts Keycloak 26.8.1, configures the realm, starts the case API and plays four scenarios,
 followed by an evidence table from the audit log. If an outcome deviates from the design, the demo
-stops with a non-zero exit code. `make integratie` runs the 50 integration tests against the same
+stops with a non-zero exit code. `make integratie` runs the 51 integration tests against the same
 stack, `make test` the unit tests.
 
 To use a real language model instead of the deterministic planner, set `PLANNER=llm` and the Azure
@@ -203,7 +203,7 @@ tested against mocked Entra responses and `terraform validate`, not against a re
 | `src/mandaat/werkplek/` | Caseworker's workplace app: sign-in with PKCE and consent, mandate management |
 | `src/mandaat/bootstrap/` | Realm setup through the Admin REST API |
 | `entra/` | Terraform and token provider for Entra Agent ID |
-| `tests/` | 89 unit tests, 50 integration tests against the real stack |
+| `tests/` | 91 unit tests, 51 integration tests against the real stack |
 | `docs/` | Design, threat model, one-pager |
 
 Quality gates: `ruff`, `ty`, `pytest`, gitleaks and `terraform validate` in CI. Versions are pinned

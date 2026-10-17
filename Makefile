@@ -25,7 +25,7 @@ integratie: .env
 
 ## test: unittests op de host
 test:
-	uv run pytest -m "not integratie"
+	uv run --all-extras pytest -m "not integratie"
 
 ## lint: ruff, opmaak en typecontrole
 lint:

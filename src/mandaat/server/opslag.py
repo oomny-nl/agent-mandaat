@@ -64,6 +64,10 @@ def ketenhash(vorige: str, record: dict[str, Any]) -> str:
     return hashlib.sha256((vorige + canon).encode()).hexdigest()
 
 
+class HistorieGewijzigd(ValueError):
+    """De mandaathistorie veranderde tussen de sessiecontrole en de registratie."""
+
+
 @dataclass(frozen=True)
 class Toelating:
     """Uitkomst van de mandaatcontrole voor één toolactie."""
@@ -95,11 +99,16 @@ class Opslag:
 
     # Mandaten ---------------------------------------------------------------------------------
 
-    def registreer_mandaat(self, gegevens: dict[str, str]) -> dict[str, Any]:
+    def registreer_mandaat(
+        self, gegevens: dict[str, str], gecontroleerde_sessies: set[str]
+    ) -> dict[str, Any]:
         """Registreer een mandaat; een eerder actief mandaat (zelfde medewerker en agent) vervalt.
 
         Args:
             gegevens: `medewerker` (sub), `gebruiker`, `naam`, `agent`, `dossier` en `sid`.
+            gecontroleerde_sessies: De sessies van eerdere mandaten die de aanroeper zojuist bij
+                Keycloak als beëindigd heeft gecontroleerd. Wijkt de historie in de transactie
+                daarvan af, dan volgt `HistorieGewijzigd`: de controle was niet meer actueel.
 
         Returns:
             Het geregistreerde mandaat.
@@ -129,6 +138,15 @@ class Opslag:
                     (gegevens["medewerker"], gegevens["agent"]),
                 ).fetchone():
                     raise ValueError("er is nog een actief mandaat; trek dat eerst in")
+                huidig = {
+                    r["sid"]
+                    for r in self._db.execute(
+                        "SELECT sid FROM mandaten WHERE medewerker = ? AND agent = ?",
+                        (gegevens["medewerker"], gegevens["agent"]),
+                    )
+                }
+                if huidig != gecontroleerde_sessies:
+                    raise HistorieGewijzigd("mandaathistorie gewijzigd tijdens de sessiecontrole")
                 self._db.execute(
                     "INSERT INTO mandaten (id, medewerker, gebruiker, naam, agent, dossier, sid, "
                     "verleend_om, geldig_vanaf, status) VALUES (:id, :medewerker, :gebruiker, "
@@ -315,10 +333,10 @@ class Opslag:
         ]
 
 
-def lees_anker(pad: Path) -> list[tuple[int, str]]:
-    """Ankerregels (nummer, hash) uit het ankerbestand."""
+def lees_anker(pad: Path) -> list[tuple[int, str]] | None:
+    """Ankerregels (nummer, hash) uit het ankerbestand; None als het bestand ontbreekt."""
     if not pad.exists():
-        return []
+        return None
     regels = []
     for regel in pad.read_text(encoding="utf-8").splitlines():
         nr, h = regel.split()
@@ -327,16 +345,29 @@ def lees_anker(pad: Path) -> list[tuple[int, str]]:
 
 
 def controleer_tegen_anker(
-    records: list[dict[str, Any]], anker: list[tuple[int, str]]
+    records: list[dict[str, Any]], anker: list[tuple[int, str]] | None
 ) -> tuple[bool, str]:
     """Controleer keten én anker: vangt ook weggelaten staartrecords en een geleegde tabel.
+
+    Een auditlog zonder (of met een leeg) anker is geen bewijs en wordt afgekeurd; alleen een
+    lege omgeving zonder records en zonder anker geldt als intact.
 
     Returns:
         (True, "intact") of (False, reden).
     """
+    if not records and not anker:
+        return True, "intact"
+    if not anker:
+        return False, "anker ontbreekt of is leeg; het log is niet te verifiëren"
     intact, fout = controleer_keten(records)
     if not intact:
         return False, f"keten gebroken bij record {fout}"
+    return _vergelijk_anker(records, anker)
+
+
+def _vergelijk_anker(
+    records: list[dict[str, Any]], anker: list[tuple[int, str]]
+) -> tuple[bool, str]:
     hashes = {r["nr"]: r["hash"] for r in records}
     for nr, h in anker:
         if nr not in hashes:

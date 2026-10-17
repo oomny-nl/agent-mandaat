@@ -41,7 +41,7 @@ werkt via MCP op een dossier-API van een fictieve gemeente. In het tweede scenar
 demo een agent die een ingevoegde instructie uit een dossier volgt, en de grens houdt: Keycloak weigert het token
 voor een besluit, en de API weigert het dossier buiten het mandaat.
 
-50 integratietests tegen de echte keten. Een dreigingsmodel tegen de OWASP Top 10 for Agentic
+51 integratietests tegen de echte keten. Een dreigingsmodel tegen de OWASP Top 10 for Agentic
 Applications 2026 en de OWASP Non-Human Identities Top 10, met per risico de test die het bewijst.
 Een eerlijke paragraaf over wat dit niet oplost.
 

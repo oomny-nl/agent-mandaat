@@ -28,7 +28,7 @@ make demo
 
 Dat start Keycloak 26.8.1, richt de realm in, start de dossier-API en speelt vier scenario's af.
 Daarna volgt de bewijstabel uit het auditlog. Wijkt een uitkomst af van het ontwerp, dan stopt
-de demo met een foutstatus. `make integratie` draait de 50 integratietests tegen dezelfde keten,
+de demo met een foutstatus. `make integratie` draait de 51 integratietests tegen dezelfde keten,
 `make test` de unittests.
 
 Met een echt taalmodel in plaats van de deterministische planner: zet in `.env` `PLANNER=llm` en
@@ -202,7 +202,7 @@ getest met nagebootste Entra-antwoorden en `terraform validate`, niet tegen een 
 | `src/mandaat/werkplek/` | Werkplek van de medewerker: login met PKCE en consent, mandaatbeheer |
 | `src/mandaat/bootstrap/` | Inrichting van de realm via de Admin REST API |
 | `entra/` | Terraform en tokenprovider voor Entra Agent ID |
-| `tests/` | 89 unittests, 50 integratietests tegen de echte keten |
+| `tests/` | 91 unittests, 51 integratietests tegen de echte keten |
 | `docs/` | Ontwerp, dreigingsmodel, one-pager |
 
 Kwaliteit: `ruff`, `ty`, `pytest`, gitleaks en `terraform validate` in CI. Versies zijn exact
