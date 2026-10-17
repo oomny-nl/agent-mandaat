@@ -55,4 +55,4 @@ Keycloak, Entra ID, en de overstap van persoonlijke tokens naar managed identiti
 bouw ik AI-agents met tool calling en MCP. Het snijvlak is precies waar overheden nu staan:
 agents toelaten zonder de controle over toegang kwijt te raken.
 
-**Repo:** [INVULLEN: repo-URL na publicatie] · **Site:** www.oomny.nl · **Mail:** michael@oomny.nl
+**Repo:** github.com/oomny-nl/agent-mandaat · **Site:** www.oomny.nl · **Mail:** michael@oomny.nl

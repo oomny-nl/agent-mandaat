@@ -55,4 +55,4 @@ federation, Keycloak, Entra ID, and the move from personal access tokens to mana
 Since 2026 I build AI agents with tool calling and MCP. That intersection is exactly where public
 organisations are now: admitting agents without losing control over access.
 
-**Repo:** [INVULLEN: repo URL after publication] · **Site:** www.oomny.nl · **Mail:** michael@oomny.nl
+**Repo:** github.com/oomny-nl/agent-mandaat · **Site:** www.oomny.nl · **Mail:** michael@oomny.nl

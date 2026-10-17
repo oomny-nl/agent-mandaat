@@ -23,7 +23,7 @@ Wat dit niet oplost: binnen zijn mandaat kan het model nog steeds onzin schrijve
 
 Agents verdienen dezelfde zorg als mensen: een eigen identiteit, rechten die verlopen, en een spoor van wat ze deden.
 
-Code, tests en opname: [INVULLEN: repo-URL na publicatie]
+Code, tests en opname: github.com/oomny-nl/agent-mandaat
 Met Keycloak (open source) en een Entra Agent ID-variant ernaast.
 
 #IAM #Keycloak #AIagents #NonHumanIdentity #Overheid
