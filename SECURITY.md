@@ -4,11 +4,11 @@ Dit is een demonstratie- en referentie-implementatie, geen product. Draai haar n
 productie; zie "Wat dit niet oplost" in de [README](README.md).
 
 Een kwetsbaarheid gevonden in het ontwerp of de code? Meld het vertrouwelijk aan
-michael@oomny.nl, met een beschrijving en zo mogelijk een reproductie. Je krijgt binnen vijf
-werkdagen een reactie. Meld geen kwetsbaarheden via een publiek issue.
+michael@oomny.nl, met een beschrijving en zo mogelijk een reproductie.
+Meld geen kwetsbaarheden via een publiek issue.
 
 ## Security
 
 This is a demonstration and reference implementation, not a product. Report vulnerabilities
-privately to michael@oomny.nl. You will get a response within five working days. Please do not
+privately to michael@oomny.nl. Please do not
 open a public issue for security reports.
