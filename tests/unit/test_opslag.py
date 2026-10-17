@@ -12,7 +12,7 @@ from typing import Any
 
 import pytest
 
-from mandaat.server.opslag import Opslag, controleer_keten
+from mandaat.server.opslag import Opslag, controleer_keten, controleer_tegen_anker, lees_anker
 
 ISS = "http://keycloak:8080/realms/lindevoort"
 
@@ -104,11 +104,20 @@ def test_wisselproef_oud_token_krijgt_geen_nieuw_mandaat(opslag: Opslag) -> None
     assert (besluit.toegestaan, besluit.reden) == (False, "token_uit_eerder_mandaat")
 
 
-def test_nieuw_mandaat_vervangt_vorige(opslag: Opslag) -> None:
+def test_geen_tweede_actief_mandaat(opslag: Opslag) -> None:
+    """Vervangen gaat alleen via intrekken; zo kan de werkplek de oude sessie eerst afsluiten."""
     a = mandaat(opslag)
-    mandaat(opslag, "2026-0143")
-    statussen = {m["id"]: m["status"] for m in opslag.mandaten()}
-    assert statussen[a["id"]] == "vervangen"
+    with pytest.raises(ValueError, match="actief mandaat"):
+        mandaat(opslag, "2026-0143")
+    opslag.trek_in(a["id"], "sub-sanne")
+    assert mandaat(opslag, "2026-0143")["status"] == "actief"
+
+
+def test_eerdere_sessies(opslag: Opslag) -> None:
+    a = mandaat(opslag, sid="sessie-a")
+    opslag.trek_in(a["id"], "sub-sanne")
+    mandaat(opslag, "2026-0143", sid="sessie-b")
+    assert opslag.eerdere_sessies("sub-sanne", "dossierassistent") == {"sessie-a", "sessie-b"}
 
 
 def test_een_mandaat_per_sessie(opslag: Opslag) -> None:
@@ -145,6 +154,33 @@ def test_dpop_bewijs_eenmalig(opslag: Opslag) -> None:
     assert not opslag.dpop_bewijs_eenmalig("jkt", "jti-1", tot)
 
 
+def _met_anker(tmp_path: Path) -> Opslag:
+    return Opslag(tmp_path / "db" / "m.db", 2, tmp_path / "anker" / "anker.log")
+
+
+def test_anker_vangt_weggelaten_staart(tmp_path: Path) -> None:
+    opslag = _met_anker(tmp_path)
+    for i in range(4):
+        opslag.audit({"beslissing": "toegestaan", "i": i})
+    records = opslag.auditlog()
+    anker = lees_anker(tmp_path / "anker" / "anker.log")
+    assert controleer_tegen_anker(records, anker) == (True, "intact")
+    assert controleer_keten(records[:-1]) == (True, None), "zonder anker valt dit niet op"
+    assert controleer_tegen_anker(records[:-1], anker)[0] is False
+    assert controleer_tegen_anker([], anker)[0] is False
+
+
+def test_anker_vangt_herberekende_keten(tmp_path: Path) -> None:
+    opslag = _met_anker(tmp_path)
+    for i in range(3):
+        opslag.audit({"beslissing": "toegestaan", "i": i})
+    andere = _met_anker(tmp_path / "vervalst")
+    for i in range(3):
+        andere.audit({"beslissing": "geweigerd", "i": i})
+    anker = lees_anker(tmp_path / "anker" / "anker.log")
+    assert controleer_tegen_anker(andere.auditlog(), anker)[0] is False
+
+
 def test_auditketen_intact_en_manipulatie_zichtbaar(opslag: Opslag, tmp_path: Path) -> None:
     for i in range(3):
         opslag.audit({"beslissing": "toegestaan", "nr_in_test": i})
@@ -155,3 +191,34 @@ def test_auditketen_intact_en_manipulatie_zichtbaar(opslag: Opslag, tmp_path: Pa
     weggelaten = [records[0], records[2]]
     assert controleer_keten(weggelaten)[0] is False
     assert json.dumps(records)  # records zijn serialiseerbaar voor export
+
+
+def test_dpop_eenmalig_onder_gelijktijdige_lees_en_schrijfacties(opslag: Opslag) -> None:
+    """Regressie: lezen zonder slot liet een hergebruikt bewijs door en gaf InterfaceError."""
+    mandaat(opslag)
+    tot = int(time.time()) + 60
+    uitkomsten: list[bool] = []
+    fouten: list[BaseException] = []
+    start = threading.Barrier(24)
+
+    def bewijs() -> None:
+        start.wait()
+        uitkomsten.append(opslag.dpop_bewijs_eenmalig("jkt", "zelfde", tot))
+
+    def lezen() -> None:
+        start.wait()
+        try:
+            for _ in range(50):
+                opslag.gebruiker_voor_sub("sub-sanne")
+                opslag.auditlog()
+        except BaseException as fout:
+            fouten.append(fout)
+
+    draden = [threading.Thread(target=bewijs) for _ in range(12)]
+    draden += [threading.Thread(target=lezen) for _ in range(12)]
+    for d in draden:
+        d.start()
+    for d in draden:
+        d.join()
+    assert fouten == []
+    assert uitkomsten.count(True) == 1

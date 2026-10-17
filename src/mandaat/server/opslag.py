@@ -13,7 +13,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import math
+import os
 import sqlite3
 import threading
 import time
@@ -48,6 +50,7 @@ CREATE TABLE IF NOT EXISTS audit (
 """
 
 GENESIS = "0" * 64
+log = logging.getLogger("audit")
 
 
 def nu_iso() -> str:
@@ -73,13 +76,22 @@ class Toelating:
 class Opslag:
     """Thread-veilige toegang tot de SQLite-database van de API."""
 
-    def __init__(self, pad: Path, max_skew: int) -> None:
+    def __init__(self, pad: Path, max_skew: int, anker: Path | None = None) -> None:
         pad.parent.mkdir(parents=True, exist_ok=True)
+        self._anker = anker
+        if anker is not None:
+            anker.parent.mkdir(parents=True, exist_ok=True)
         self._db = sqlite3.connect(pad, isolation_level=None, check_same_thread=False, timeout=10)
         self._db.row_factory = sqlite3.Row
         self._db.executescript(SCHEMA)
-        self._slot = threading.Lock()
+        # Eén verbinding voor alle threads: elke toegang, ook lezen, loopt via dit slot.
+        self._slot = threading.RLock()
         self.max_skew = max_skew
+
+    def _lees(self, sql: str, params: tuple[Any, ...] = ()) -> list[sqlite3.Row]:
+        """Leesquery onder het slot (de verbinding wordt door meerdere threads gedeeld)."""
+        with self._slot:
+            return self._db.execute(sql, params).fetchall()
 
     # Mandaten ---------------------------------------------------------------------------------
 
@@ -93,7 +105,8 @@ class Opslag:
             Het geregistreerde mandaat.
 
         Raises:
-            ValueError: Als er uit deze Keycloak-sessie al een mandaat is geregistreerd.
+            ValueError: Als er uit deze Keycloak-sessie al een mandaat is geregistreerd, of als er
+                voor deze medewerker en agent nog een actief mandaat is (eerst intrekken).
         """
         verleend = time.time()
         mandaat = {
@@ -110,11 +123,12 @@ class Opslag:
                     "SELECT 1 FROM mandaten WHERE sid = ?", (gegevens["sid"],)
                 ).fetchone():
                     raise ValueError("uit deze sessie is al een mandaat verleend; log opnieuw in")
-                self._db.execute(
-                    "UPDATE mandaten SET status = 'vervangen', ingetrokken_om = ? "
+                if self._db.execute(
+                    "SELECT 1 FROM mandaten "
                     "WHERE medewerker = ? AND agent = ? AND status = 'actief'",
-                    (verleend, gegevens["medewerker"], gegevens["agent"]),
-                )
+                    (gegevens["medewerker"], gegevens["agent"]),
+                ).fetchone():
+                    raise ValueError("er is nog een actief mandaat; trek dat eerst in")
                 self._db.execute(
                     "INSERT INTO mandaten (id, medewerker, gebruiker, naam, agent, dossier, sid, "
                     "verleend_om, geldig_vanaf, status) VALUES (:id, :medewerker, :gebruiker, "
@@ -141,9 +155,16 @@ class Opslag:
             )
         return cursor.rowcount == 1
 
+    def eerdere_sessies(self, medewerker: str, agent: str) -> set[str]:
+        """Keycloak-sessies (sid) van alle eerdere mandaten van deze medewerker en agent."""
+        rijen = self._lees(
+            "SELECT sid FROM mandaten WHERE medewerker = ? AND agent = ?", (medewerker, agent)
+        )
+        return {r["sid"] for r in rijen}
+
     def mandaten(self) -> list[dict[str, Any]]:
         """Alle mandaten, nieuwste eerst."""
-        rijen = self._db.execute("SELECT * FROM mandaten ORDER BY verleend_om DESC").fetchall()
+        rijen = self._lees("SELECT * FROM mandaten ORDER BY verleend_om DESC")
         return [dict(r) for r in rijen]
 
     # Toelating --------------------------------------------------------------------------------
@@ -170,25 +191,22 @@ class Opslag:
 
     def actief_mandaat(self, sub: str, agent: str) -> str | None:
         """Id van het actieve mandaat van deze medewerker en agent, voor het auditrecord."""
-        rij = self._db.execute(
+        rijen = self._lees(
             "SELECT id FROM mandaten WHERE medewerker = ? AND agent = ? AND status = 'actief'",
             (sub, agent),
-        ).fetchone()
-        return rij["id"] if rij else None
+        )
+        return rijen[0]["id"] if rijen else None
 
     def gebruiker_voor_sub(self, sub: str) -> str | None:
         """Gebruikersnaam bij een `sub`, bekend uit een eerder verleend mandaat."""
-        rij = self._db.execute(
-            "SELECT gebruiker FROM mandaten WHERE medewerker = ? LIMIT 1", (sub,)
-        ).fetchone()
-        return rij["gebruiker"] if rij else None
+        rijen = self._lees("SELECT gebruiker FROM mandaten WHERE medewerker = ? LIMIT 1", (sub,))
+        return rijen[0]["gebruiker"] if rijen else None
 
     def gebruiker_van(self, mandaat_id: str) -> str:
         """Gebruikersnaam van de medewerker van een mandaat."""
-        rij = self._db.execute(
-            "SELECT gebruiker FROM mandaten WHERE id = ?", (mandaat_id,)
-        ).fetchone()
-        return rij["gebruiker"]
+        return self._lees("SELECT gebruiker FROM mandaten WHERE id = ?", (mandaat_id,))[0][
+            "gebruiker"
+        ]
 
     def laat_toe(self, claims: dict[str, Any], dossier: str) -> Toelating:
         """Mandaatcontrole en eenmalige reservering van het token in één transactie.
@@ -246,8 +264,8 @@ class Opslag:
 
     def notities(self, dossier: str) -> list[dict[str, Any]]:
         """Notities bij een dossier."""
-        rijen = self._db.execute("SELECT * FROM notities WHERE dossier = ? ORDER BY nr", (dossier,))
-        return [dict(r) for r in rijen.fetchall()]
+        rijen = self._lees("SELECT * FROM notities WHERE dossier = ? ORDER BY nr", (dossier,))
+        return [dict(r) for r in rijen]
 
     def leg_besluit_vast(self, dossier: str, uitkomst: str, door: str) -> int:
         """Leg een besluit vast (alleen door een medewerker zelf)."""
@@ -275,15 +293,59 @@ class Opslag:
                 "INSERT INTO audit (record, vorige, hash) VALUES (?, ?, ?)",
                 (json.dumps(record, ensure_ascii=False, sort_keys=True), vorige, h),
             )
+            self._veranker(int(cursor.lastrowid or 0), h)
         return {"nr": cursor.lastrowid, **record, "vorige": vorige, "hash": h}
+
+    def _veranker(self, nr: int, h: str) -> None:
+        """Schrijf de ketenkop naar een apart bestand (eigen volume) en naar het log."""
+        log.info("audit-anker %d %s", nr, h)
+        if self._anker is None:
+            return
+        with self._anker.open("a", encoding="utf-8") as bestand:
+            bestand.write(f"{nr} {h}\n")
+            bestand.flush()
+            os.fsync(bestand.fileno())
 
     def auditlog(self) -> list[dict[str, Any]]:
         """Het volledige auditlog in volgorde."""
-        rijen = self._db.execute("SELECT * FROM audit ORDER BY nr").fetchall()
+        rijen = self._lees("SELECT * FROM audit ORDER BY nr")
         return [
             {"nr": r["nr"], **json.loads(r["record"]), "vorige": r["vorige"], "hash": r["hash"]}
             for r in rijen
         ]
+
+
+def lees_anker(pad: Path) -> list[tuple[int, str]]:
+    """Ankerregels (nummer, hash) uit het ankerbestand."""
+    if not pad.exists():
+        return []
+    regels = []
+    for regel in pad.read_text(encoding="utf-8").splitlines():
+        nr, h = regel.split()
+        regels.append((int(nr), h))
+    return regels
+
+
+def controleer_tegen_anker(
+    records: list[dict[str, Any]], anker: list[tuple[int, str]]
+) -> tuple[bool, str]:
+    """Controleer keten én anker: vangt ook weggelaten staartrecords en een geleegde tabel.
+
+    Returns:
+        (True, "intact") of (False, reden).
+    """
+    intact, fout = controleer_keten(records)
+    if not intact:
+        return False, f"keten gebroken bij record {fout}"
+    hashes = {r["nr"]: r["hash"] for r in records}
+    for nr, h in anker:
+        if nr not in hashes:
+            return False, f"record {nr} staat in het anker maar ontbreekt in het log"
+        if hashes[nr] != h:
+            return False, f"record {nr} wijkt af van het anker"
+    if anker and records and records[-1]["nr"] != anker[-1][0]:
+        return False, "log en anker eindigen niet op hetzelfde record"
+    return True, "intact"
 
 
 def controleer_keten(records: list[dict[str, Any]]) -> tuple[bool, int | None]:

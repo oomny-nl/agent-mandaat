@@ -16,7 +16,7 @@ from mandaat.bootstrap.keycloak import admin_client
 from mandaat.config import Instellingen
 from mandaat.dpop import DPoPSleutel
 from mandaat.geheimen import Geheimen
-from mandaat.werkplek.sessie import Werkplek
+from mandaat.werkplek.sessie import Werkplek, WerkplekFout
 
 MCP_KOPPEN = {"Accept": "application/json, text/event-stream", "MCP-Protocol-Version": "2025-11-25"}
 
@@ -58,7 +58,7 @@ class Sessie:
 @pytest.fixture
 def verleen(inst: Instellingen, geheimen: Geheimen) -> Iterator[Any]:
     """Fabriek: log in, registreer een mandaat en wacht tot het geldig is. Ruimt sessies op."""
-    sessies: list[Werkplek] = []
+    sessies: list[tuple[Werkplek, str]] = []
 
     def maak(gebruiker: str = "sanne", taak: str = "2026-0142", wachten: bool = True) -> Sessie:
         werkplek = Werkplek(inst, gebruiker, geheimen.wachtwoord(gebruiker))
@@ -66,12 +66,17 @@ def verleen(inst: Instellingen, geheimen: Geheimen) -> Iterator[Any]:
         mandaat = werkplek.registreer_mandaat()
         if wachten:
             time.sleep(max(0.0, mandaat["geldig_vanaf"] - time.time() + 0.1))
-        sessies.append(werkplek)
+        sessies.append((werkplek, mandaat["id"]))
         return Sessie(werkplek, mandaat, werkplek.subject_token())
 
     yield maak
-    for werkplek in sessies:
-        werkplek.log_uit()
+    for werkplek, mandaat_id in sessies:
+        if werkplek.sessie is None:
+            continue  # al ingetrokken en uitgelogd in de test
+        try:
+            werkplek.trek_in(mandaat_id)
+        except WerkplekFout:
+            werkplek.log_uit()  # mandaat was al ingetrokken; sessie alsnog beëindigen
 
 
 def roep(

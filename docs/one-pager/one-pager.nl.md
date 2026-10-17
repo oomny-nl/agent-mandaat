@@ -30,17 +30,18 @@ Een agent krijgt dezelfde identity-zorg als een medewerker:
   Een agent legt nooit een besluit vast.
 - **Intrekbaar.** De medewerker trekt het mandaat in en de volgende actie faalt, ook met vooraf
   opgehaalde tokens. De beheerder heeft een noodstop.
-- **Auditspoor.** Elke actie en elke weigering staat in een hashketen: wie, namens wie, welke
-  tool, welk dossier, welk token, waarom.
+- **Auditspoor.** Elke actie en elke weigering door de API staat in een hashketen met een apart
+  anker: wie, namens wie, welke tool, welk dossier, welk token, waarom. Weigeringen door Keycloak
+  staan in de Keycloak-events.
 
 ## Het bewijs
 
 Een publieke repo met een werkende demo in één commando (`make demo`). Een LangGraph-agent
-werkt via MCP op een dossier-API van een fictieve gemeente. In het tweede scenario kaapt een
-ingevoegde instructie in een dossier het model, en de grens houdt: Keycloak weigert het token
+werkt via MCP op een dossier-API van een fictieve gemeente. In het tweede scenario simuleert de
+demo een agent die een ingevoegde instructie uit een dossier volgt, en de grens houdt: Keycloak weigert het token
 voor een besluit, en de API weigert het dossier buiten het mandaat.
 
-36 integratietests tegen de echte keten. Een dreigingsmodel tegen de OWASP Top 10 for Agentic
+50 integratietests tegen de echte keten. Een dreigingsmodel tegen de OWASP Top 10 for Agentic
 Applications 2026 en de OWASP Non-Human Identities Top 10, met per risico de test die het bewijst.
 Een eerlijke paragraaf over wat dit niet oplost.
 

@@ -95,6 +95,37 @@ class Tokencontrole:
         if not actief:
             raise TokenFout("token is ingetrokken of niet meer actief (introspectie)")
 
+    def actieve_sessies(self, sub: str) -> set[str]:
+        """Actieve Keycloak-sessies (sid) van een medewerker, via de Admin API.
+
+        De resource-client heeft daarvoor alleen de rol `view-users`; schrijven kan hij niet.
+
+        Raises:
+            TokenFout: Als Keycloak niet antwoordt (fail closed: dan geen nieuw mandaat).
+        """
+        try:
+            antwoord = httpx2.post(
+                f"{self.inst.oidc}/token",
+                data={
+                    "grant_type": "client_credentials",
+                    "client_id": self.inst.resource_url,
+                    "client_secret": self._geheim,
+                },
+                timeout=10,
+            )
+            token = antwoord.json()["access_token"]
+            sessies = httpx2.get(
+                f"{self.inst.keycloak_url}/admin/realms/{self.inst.realm}/users/{sub}/sessions",
+                headers={"Authorization": f"Bearer {token}"},
+                timeout=10,
+            )
+            sessies.raise_for_status()
+        except (httpx2.HTTPError, KeyError, ValueError) as fout:
+            raise TokenFout(
+                f"sessies niet op te vragen, daarom geweigerd: {fout}", status=503
+            ) from fout
+        return {s["id"] for s in sessies.json()}
+
     def agenttoken(self, autorisatie: str, dpop: str | None, htm: str) -> Gecontroleerd:
         """Controleer een gedelegeerd agenttoken met DPoP-bewijs.
 
@@ -118,11 +149,12 @@ class Tokencontrole:
         actor = claims.get("act")
         if not isinstance(actor, dict) or actor.get("client_id") not in TOEGELATEN_AGENTS:
             raise TokenFout(
-                "token zonder act van een toegelaten agent; tools zijn alleen voor agents"
+                "token zonder act van een toegelaten agent; tools zijn alleen voor agents",
+                claims=claims,
             )
         jkt = (claims.get("cnf") or {}).get("jkt")
         if not jkt:
-            raise TokenFout("token is niet DPoP-gebonden (cnf.jkt ontbreekt)")
+            raise TokenFout("token is niet DPoP-gebonden (cnf.jkt ontbreekt)", claims=claims)
         try:
             bewijs = valideer_bewijs(dpop, htm, self.inst.resource_url, token, jkt)
             self._actief(token)
@@ -150,11 +182,18 @@ class Tokencontrole:
             raise TokenFout("Authorization: Bearer vereist")
         claims = self._decodeer(token)
         if "act" in claims or "may_act" in claims:
-            raise TokenFout("dit endpoint is alleen voor de medewerker zelf, niet voor een agent")
+            raise TokenFout(
+                "dit endpoint is alleen voor de medewerker zelf, niet voor een agent", claims=claims
+            )
         if claims.get("azp") != self.inst.werkplek_id:
-            raise TokenFout("token niet uitgegeven aan de werkplek")
+            raise TokenFout("token niet uitgegeven aan de werkplek", claims=claims)
         gecontroleerd = Gecontroleerd(claims)
         if scope not in gecontroleerd.scopes:
-            raise TokenFout(f"scope {scope} vereist", code="insufficient_scope", status=403)
-        self._actief(token)
+            raise TokenFout(
+                f"scope {scope} vereist", code="insufficient_scope", status=403, claims=claims
+            )
+        try:
+            self._actief(token)
+        except TokenFout as fout:
+            raise TokenFout(fout.reden, fout.code, fout.status, claims) from fout
         return gecontroleerd

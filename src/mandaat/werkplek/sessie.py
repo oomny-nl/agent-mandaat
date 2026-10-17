@@ -106,6 +106,7 @@ class Werkplek:
         Returns:
             De tokens van de nieuwe sessie (blijven in de werkplek).
         """
+        self.log_uit()  # een nieuwe taak begint nooit naast een levende oude sessie
         scope = " ".join(
             (
                 "openid",

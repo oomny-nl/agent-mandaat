@@ -11,11 +11,11 @@ ENV UV_COMPILE_BYTECODE=1 \
     PYTHONUNBUFFERED=1
 WORKDIR /app
 COPY pyproject.toml uv.lock .python-version README.md ./
-RUN uv sync --frozen --no-install-project --group dev
+RUN uv sync --frozen --no-install-project --group dev --all-extras
 COPY src ./src
 COPY tests ./tests
-RUN uv sync --frozen --group dev \
+RUN uv sync --frozen --group dev --all-extras \
     && useradd --uid 10001 --no-create-home app \
-    && mkdir -p /data /geheimen \
-    && chown app /data /geheimen
+    && mkdir -p /data /geheimen /anker \
+    && chown app /data /geheimen /anker
 USER 10001

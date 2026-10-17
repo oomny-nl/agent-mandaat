@@ -46,7 +46,7 @@ class Dienst:
     @cached_property
     def opslag(self) -> Opslag:
         """Database van de API."""
-        return Opslag(self.inst.db_pad, self.inst.max_skew)
+        return Opslag(self.inst.db_pad, self.inst.max_skew, self.inst.anker_pad)
 
     @cached_property
     def controle(self) -> Tokencontrole:
@@ -166,7 +166,19 @@ def maak_mcp(dienst: Dienst) -> MCPServer:
     return mcp
 
 
-def _bearerfout(dienst: Dienst, fout: TokenFout) -> Response:
+def _bearerfout(dienst: Dienst, fout: TokenFout, handeling: str) -> Response:
+    dienst.opslag.audit(
+        {
+            "laag": "api-beheer",
+            "beslissing": "geweigerd",
+            "tool": handeling,
+            "reden": fout.reden,
+            "fout": fout.code,
+            "medewerker": fout.claims.get("sub"),
+            "gebruiker": fout.claims.get("preferred_username"),
+            "agent": (fout.claims.get("act") or {}).get("client_id"),
+        }
+    )
     return JSONResponse(
         {"error": fout.code, "error_description": fout.reden},
         status_code=fout.status,
@@ -198,7 +210,7 @@ def _beheerroutes(mcp: MCPServer, dienst: Dienst) -> None:
         try:
             token = await anyio.to_thread.run_sync(_medewerker, dienst, request, "mandaat:beheren")
         except TokenFout as fout:
-            return _bearerfout(dienst, fout)
+            return _bearerfout(dienst, fout, "mandaat verlenen")
         return await anyio.to_thread.run_sync(_verleen, dienst, token.claims)
 
     @mcp.custom_route("/mandaten/{mandaat_id}", methods=["DELETE"])
@@ -206,7 +218,7 @@ def _beheerroutes(mcp: MCPServer, dienst: Dienst) -> None:
         try:
             token = await anyio.to_thread.run_sync(_medewerker, dienst, request, "mandaat:beheren")
         except TokenFout as fout:
-            return _bearerfout(dienst, fout)
+            return _bearerfout(dienst, fout, "mandaat intrekken")
         mandaat_id = request.path_params["mandaat_id"]
         return await anyio.to_thread.run_sync(_trek_in, dienst, token.claims, mandaat_id)
 
@@ -215,7 +227,7 @@ def _beheerroutes(mcp: MCPServer, dienst: Dienst) -> None:
         try:
             token = await anyio.to_thread.run_sync(_medewerker, dienst, request, "besluit:nemen")
         except TokenFout as fout:
-            return _bearerfout(dienst, fout)
+            return _bearerfout(dienst, fout, "besluit (eigen handeling)")
         uitkomst = str((await request.json()).get("uitkomst", ""))
         return await anyio.to_thread.run_sync(
             _besluit, dienst, token.claims, request.path_params["dossier"], uitkomst
@@ -246,6 +258,19 @@ def _verleen(dienst: Dienst, claims: dict[str, Any]) -> Response:
     reden = mag_zelf(gebruiker, "dossier:lezen", taak)
     if reden:
         return JSONResponse({"error": f"geen mandaat mogelijk: {reden}"}, status_code=403)
+    # De delegatiebron van eerdere mandaten moet echt weg zijn: hun Keycloak-sessies zijn beëindigd.
+    # Anders kan de agent met een oud subject token nieuwe tokens halen onder dit nieuwe mandaat.
+    try:
+        nog_actief = dienst.opslag.eerdere_sessies(
+            claims["sub"], dienst.inst.agent_id
+        ) & dienst.controle.actieve_sessies(claims["sub"])
+    except TokenFout as fout:
+        return JSONResponse({"error": fout.reden}, status_code=fout.status)
+    if nog_actief:
+        return JSONResponse(
+            {"error": "de sessie van een eerder mandaat is nog actief; log die eerst uit"},
+            status_code=409,
+        )
     try:
         mandaat = dienst.opslag.registreer_mandaat(
             {

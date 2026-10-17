@@ -267,3 +267,18 @@ audience, vervalst token, hergebruik na intrekking, introspectie onbereikbaar.
 - README NL en EN, sequence-diagram (Mermaid), bewijstabel (actie, mens, agent, taak, beslissing,
   reden, test), demo-opname (VHS), one-pager en LinkedIn-concept onder `docs/`. Opname en registerregel
   verwijzen naar een exacte commit.
+
+## 10. Aanvullingen bij de bouw (17-10-2026)
+
+Uit de codereview, binnen dit ontwerp:
+- Vervangen gaat alleen via intrekken: de API weigert een tweede actief mandaat, en registreert
+  een nieuw mandaat pas als de Keycloak-sessies van eerdere mandaten van deze medewerker en agent
+  aantoonbaar beëindigd zijn. De API vraagt dat na via de Admin API met een service account dat
+  alleen `view-users` heeft (gemeten: lezen werkt, schrijven geeft 403). Faalt die vraag: geen
+  nieuw mandaat. Een nieuwe login in de werkplek beëindigt altijd eerst de oude sessie.
+- Het anker uit sectie 5 is een apart bestand op een eigen volume, met per auditrecord nummer en
+  hash. Verificatie vergelijkt keten en anker, zodat ook weggelaten staartrecords opvallen.
+- Weigeringen in de poort en bij beheerverzoeken gaan met de al gevalideerde claims de audit in.
+- De poort begrenst de body (64 KiB) en behandelt misvormde JSON-RPC zonder serverfout.
+- Alle databasetoegang, ook lezen, loopt via één slot; een gelijktijdigheidsproef met hetzelfde
+  DPoP-bewijs liet zonder dat slot een hergebruik door.

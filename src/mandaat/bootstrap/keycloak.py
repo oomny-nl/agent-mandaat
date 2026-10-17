@@ -206,7 +206,9 @@ def maak_clients(
             "secret": geheimen.wachtwoord("resource-client"),
             "standardFlowEnabled": False,
             "directAccessGrantsEnabled": False,
-            "serviceAccountsEnabled": False,
+            # Service account met alleen view-users: de API controleert vóór een nieuw mandaat dat
+            # de Keycloak-sessie van het vorige mandaat echt is beëindigd.
+            "serviceAccountsEnabled": True,
         },
     )
     ids[inst.werkplek_id] = _maak_client(
@@ -259,6 +261,18 @@ def maak_clients(
     )
     _koppel_scopes(admin, f"/{r}/clients/{ids[inst.agent_id]}", scopes, AGENTSCOPES)
     return ids
+
+
+def geef_sessie_inzage(admin: httpx2.Client, inst: Instellingen, ids: dict[str, str]) -> None:
+    """Geef het service account van de resource alleen de rol `view-users`."""
+    r = inst.realm
+    sa = admin.get(f"/{r}/clients/{ids[inst.resource_url]}/service-account-user").json()
+    rm = admin.get(f"/{r}/clients", params={"clientId": "realm-management"}).json()[0]
+    rol = _controleer(admin.get(f"/{r}/clients/{rm['id']}/roles/view-users"), "rol view-users")
+    _controleer(
+        admin.post(f"/{r}/users/{sa['id']}/role-mappings/clients/{rm['id']}", json=[rol.json()]),
+        "view-users toekennen",
+    )
 
 
 def maak_gebruikers(admin: httpx2.Client, inst: Instellingen, geheimen: Geheimen) -> None:
@@ -338,6 +352,7 @@ def richt_in(inst: Instellingen, geheimen: Geheimen, admin: httpx2.Client) -> No
     maak_realm(admin, inst)
     scopes = maak_scopes(admin, inst)
     ids = maak_clients(admin, inst, geheimen, scopes)
+    geef_sessie_inzage(admin, inst, ids)
     maak_gebruikers(admin, inst, geheimen)
     maak_delegatiepermissie(admin, inst, ids)
     maak_clientpolicy(admin, inst)

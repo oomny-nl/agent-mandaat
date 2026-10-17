@@ -30,17 +30,18 @@ An agent gets the same identity care as an employee:
   all permit. An agent never records a formal decision.
 - **Revocable.** The employee revokes the mandate and the next action fails, including with tokens
   fetched in advance. The administrator has a kill switch.
-- **Audit trail.** Every action and every refusal is recorded in a hash chain: who, on whose
-  behalf, which tool, which case, which token, and why.
+- **Audit trail.** Every action and every refusal by the API is recorded in a hash chain with a
+  separate anchor: who, on whose behalf, which tool, which case, which token, and why. Refusals
+  by Keycloak are in the Keycloak events.
 
 ## The evidence
 
 A public repository with a working demo in one command (`make demo`). A LangGraph agent works
-over MCP on the case API of a fictional municipality. In the second scenario an instruction
-injected into a case file hijacks the model, and the boundary holds: Keycloak refuses the token
+over MCP on the case API of a fictional municipality. In the second scenario the demo
+simulates an agent that follows an instruction injected into a case file, and the boundary holds: Keycloak refuses the token
 for a decision, and the API refuses the case outside the mandate.
 
-36 integration tests against the real stack. A threat model against the OWASP Top 10 for Agentic
+50 integration tests against the real stack. A threat model against the OWASP Top 10 for Agentic
 Applications 2026 and the OWASP Non-Human Identities Top 10, with the test behind each control.
 An honest section on what this does not solve.
 

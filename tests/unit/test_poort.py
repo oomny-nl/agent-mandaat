@@ -115,3 +115,35 @@ def test_weigering_staat_in_audit(tmp_path: Path) -> None:
 def test_andere_paden_niet_afgeschermd(tmp_path: Path, pad: str) -> None:
     client = _app(tmp_path, _Controle(TokenFout("nooit")))
     assert client.post(pad).status_code == 404  # bestaat niet in deze test-app, wel doorgelaten
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": ["x"]},
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {"name": "x", "arguments": ["y"]},
+        },
+        ["geen", "object"],
+    ],
+)
+def test_misvormde_jsonrpc_zonder_token_geeft_geen_crash(tmp_path: Path, body: Any) -> None:
+    client = _app(tmp_path, _Controle(TokenFout("geen token")))
+    antwoord = client.post("/mcp", content=json.dumps(body))
+    assert antwoord.status_code == 401
+
+
+def test_te_groot_verzoek(tmp_path: Path) -> None:
+    client = _app(tmp_path, _Controle())
+    assert client.post("/mcp", content=b"x" * (64 * 1024 + 1)).status_code == 413
+
+
+def test_scopeweigering_houdt_claims_in_audit(tmp_path: Path) -> None:
+    _app(tmp_path, _Controle()).post("/mcp", json=_aanroep("besluit_vastleggen"))
+    record = Opslag(tmp_path / "db", 2).auditlog()[-1]
+    assert record["fout"] == "insufficient_scope"
+    assert record["agent"] == "dossierassistent"
+    assert record["medewerker"] == "s"

@@ -7,6 +7,7 @@ x-omgeving: &omgeving
   RESOURCE_URL: http://dossier-mcp:8000/mcp
   GEHEIMEN_DIR: /geheimen
   DB_PAD: /data/mandaat.db
+  ANKER_PAD: /anker/audit-anker.log
   MAX_SKEW: "2"
   TZ: Europe/Amsterdam
 
@@ -57,6 +58,7 @@ services:
     volumes:
       - geheimen:/geheimen:ro
       - data:/data
+      - anker:/anker
     ports:
       - "127.0.0.1:8000:8000"
     depends_on:
@@ -78,9 +80,17 @@ services:
       DEMO_BREEDTE: ${DEMO_BREEDTE:-100}
       PLANNER: ${PLANNER:-deterministisch}
       DEMO_TEMPO: ${DEMO_TEMPO:-0}
+      AZURE_OPENAI_ENDPOINT: ${AZURE_OPENAI_ENDPOINT:-}
+      AZURE_OPENAI_DEPLOYMENT: ${AZURE_OPENAI_DEPLOYMENT:-}
+      AZURE_OPENAI_API_KEY: ${AZURE_OPENAI_API_KEY:-}
+      OPENAI_API_VERSION: ${OPENAI_API_VERSION:-}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
     volumes:
       - geheimen:/geheimen:ro
       - data:/data:ro
+      - anker:/anker:ro
     depends_on:
       dossier-mcp:
         condition: service_healthy
@@ -95,6 +105,7 @@ services:
     volumes:
       - geheimen:/geheimen:ro
       - data:/data:ro
+      - anker:/anker:ro
     depends_on:
       dossier-mcp:
         condition: service_healthy
@@ -102,3 +113,4 @@ services:
 volumes:
   geheimen:
   data:
+  anker:

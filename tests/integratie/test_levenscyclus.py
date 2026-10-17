@@ -13,7 +13,7 @@ import pytest
 
 from mandaat.agent.makelaar import Makelaar, MandaatGeweigerd
 from mandaat.config import Instellingen
-from mandaat.server.opslag import controleer_keten
+from mandaat.server.opslag import controleer_tegen_anker, lees_anker
 from mandaat.werkplek.sessie import WerkplekFout
 from tests.integratie.conftest import roep, toolfout
 
@@ -117,7 +117,10 @@ def test_auditketen_intact_en_compleet(inst: Instellingen) -> None:
         for r in db.execute("SELECT * FROM audit ORDER BY nr")
     ]
     assert records, "geen auditrecords; draai deze test na de andere integratietests"
-    assert controleer_keten(records) == (True, None)
+    assert controleer_tegen_anker(records, lees_anker(inst.anker_pad)) == (True, "intact")
+    assert any(r.get("laag") == "api-beheer" and r["beslissing"] == "geweigerd" for r in records), (
+        "geweigerde beheerverzoeken ontbreken in de audit"
+    )
     for record in records:
         if record.get("laag") == "api-mandaat":
             velden = ("medewerker", "agent", "tool", "scope", "dossier", "token_jti", "mandaat")

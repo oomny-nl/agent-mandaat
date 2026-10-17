@@ -33,11 +33,23 @@ def challenge(schema: str, fout: TokenFout, metadata_url: str, scope: str | None
     return f"{schema} " + ", ".join(delen)
 
 
+MAX_BODY = 64 * 1024
+
+
+class TeGroot(Exception):
+    """Verzoek groter dan MAX_BODY."""
+
+
 async def _lees_body(receive: Receive) -> bytes:
-    delen = []
+    delen: list[bytes] = []
+    grootte = 0
     while True:
         bericht = await receive()
-        delen.append(bericht.get("body", b""))
+        deel = bericht.get("body", b"")
+        grootte += len(deel)
+        if grootte > MAX_BODY:
+            raise TeGroot
+        delen.append(deel)
         if not bericht.get("more_body"):
             return b"".join(delen)
 
@@ -50,8 +62,11 @@ def _toolaanroep(body: bytes) -> tuple[str | None, str | None]:
         return None, None
     if not isinstance(verzoek, dict) or verzoek.get("method") != "tools/call":
         return None, None
-    params = verzoek.get("params") or {}
-    dossier = (params.get("arguments") or {}).get("dossier")
+    params = verzoek.get("params")
+    if not isinstance(params, dict):
+        return "(ongeldig)", None
+    argumenten = params.get("arguments")
+    dossier = argumenten.get("dossier") if isinstance(argumenten, dict) else None
     return str(params.get("name")), str(dossier) if dossier else None
 
 
@@ -102,17 +117,23 @@ class Agentpoort:
             headers.get("authorization", ""), headers.get("dpop"), methode
         )
         bewijs = gecontroleerd.bewijs
+        claims = gecontroleerd.claims
         if bewijs is None or not self.opslag().dpop_bewijs_eenmalig(
             bewijs.jkt, bewijs.jti, bewijs.iat + 120
         ):
-            raise TokenFout("DPoP-bewijs is al eerder gebruikt", code="invalid_dpop_proof")
+            raise TokenFout(
+                "DPoP-bewijs is al eerder gebruikt", code="invalid_dpop_proof", claims=claims
+            )
         if tool is not None:
             nodig = self.toolscopes.get(tool)
             if nodig is None or nodig not in gecontroleerd.scopes:
                 raise TokenFout(
-                    f"tool {tool} vereist scope {nodig}", code="insufficient_scope", status=403
+                    f"tool {tool} vereist scope {nodig}",
+                    code="insufficient_scope",
+                    status=403,
+                    claims=claims,
                 )
-        return gecontroleerd.claims
+        return claims
 
     def _audit_weigering(self, fout: TokenFout, tool: str | None, dossier: str | None) -> None:
         sub = fout.claims.get("sub")
@@ -137,7 +158,12 @@ class Agentpoort:
             await self.app(scope, receive, send)
             return
         headers = {k.decode().lower(): v.decode() for k, v in scope["headers"]}
-        body = await _lees_body(receive)
+        try:
+            body = await _lees_body(receive)
+        except TeGroot:
+            await send({"type": "http.response.start", "status": 413, "headers": []})
+            await send({"type": "http.response.body", "body": b""})
+            return
         tool, dossier = _toolaanroep(body)
         try:
             claims = await anyio.to_thread.run_sync(
