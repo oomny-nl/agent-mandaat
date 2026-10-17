@@ -65,7 +65,7 @@ sequenceDiagram
     participant D as Dossier-API (MCP)
 
     S->>K: login met PKCE, scope delegation:client:dossierassistent taak:2026-0142
-    K-->>S: toestemmingsscherm; token met may_act {dossierassistent} en taak
+    K-->>S: toestemmingsscherm, daarna token met may_act voor dossierassistent en taak
     S->>D: POST /mandaten (eigen beheertoken)
     D-->>S: mandaat actief: Sanne, dossierassistent, 2026-0142
     S->>A: opdracht plus subject token (audience: alleen de agent)
@@ -80,7 +80,7 @@ sequenceDiagram
         D->>D: mandaat, taak, caseload en rol, eenmalig gebruik, audit
         D-->>A: resultaat of weigering met reden
     end
-    S->>D: DELETE /mandaten/{id}, daarna uitloggen
+    S->>D: DELETE /mandaten/id, daarna uitloggen
     Note over A,D: vooraf opgehaalde tokens worden vanaf nu geweigerd
 ```
 

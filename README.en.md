@@ -66,7 +66,7 @@ sequenceDiagram
     participant D as Case API (MCP)
 
     S->>K: sign-in with PKCE, scope delegation:client:dossierassistent taak:2026-0142
-    K-->>S: consent screen; token with may_act {dossierassistent} and the task
+    K-->>S: consent screen, then a token with may_act for dossierassistent and the task
     S->>D: POST /mandaten (her own management token)
     D-->>S: mandate active: Sanne, case assistant, 2026-0142
     S->>A: task plus subject token (audience: the agent only)
@@ -81,7 +81,7 @@ sequenceDiagram
         D->>D: mandate, task, caseload and role, single use, audit
         D-->>A: result or refusal with reason
     end
-    S->>D: DELETE /mandaten/{id}, then sign out
+    S->>D: DELETE /mandaten/id, then sign out
     Note over A,D: tokens fetched in advance are refused from now on
 ```
 
