@@ -236,7 +236,7 @@ responses and `terraform validate`, not against a real tenant.
 | `src/mandaat/werkplek/` | Caseworker's workplace app: sign-in with PKCE and consent, mandate management |
 | `src/mandaat/bootstrap/` | Realm setup through the Admin REST API |
 | `entra/` | Terraform and token provider for Entra Agent ID |
-| `tests/` | 160 unit tests, 55 integration tests against the real stack |
+| `tests/` | 162 unit tests, 55 integration tests against the real stack |
 | `docs/` | Design, threat model, one-pager |
 
 Quality gates: `ruff`, `ty`, `pytest`, gitleaks and `terraform validate` in CI. Versions are pinned

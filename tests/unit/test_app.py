@@ -90,6 +90,8 @@ def test_origin_van_een_browser_geweigerd(client: TestClient) -> None:
     [
         (b"{", "geen geldige JSON"),
         (b"[]", "uitkomst"),
+        (b"{}", "uitkomst"),
+        (b'{"uitkomst": {"genest": "waarde"}}', "uitkomst"),
         (b'{"uitkomst": 1}', "uitkomst"),
         (b'{"uitkomst": "   "}', "uitkomst"),
         (('{"uitkomst": "' + "x" * (MAX_UITKOMST + 1) + '"}').encode(), "langer dan"),
