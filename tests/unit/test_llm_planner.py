@@ -11,7 +11,7 @@ from typing import Any
 import pytest
 from langchain_core.messages import HumanMessage
 
-from mandaat.agent.planner import llm_planner
+from mandaat.agent.planner import LLM_OMGEVING, llm_model, llm_planner
 
 TOOLS = [
     {
@@ -96,3 +96,31 @@ def test_llm_planner_stuurt_echte_schemas_en_leest_tool_calls(model: str) -> Non
     assert verzoek["model"] == "nep-model"
     assert verzoek["tools"][0]["function"]["parameters"]["required"] == ["dossier"]
     assert verzoek["messages"][0]["role"] == "system"
+
+
+def test_llm_model_behandelt_lege_omgevingsvariabelen_als_niet_gezet(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Compose geeft niet-ingevulde variabelen leeg door; dan gelden de standaardwaarden."""
+    for naam in LLM_OMGEVING:
+        monkeypatch.setenv(naam, "")
+    monkeypatch.setenv("OPENAI_API_KEY", "nep-sleutel-alleen-voor-test")
+    model = llm_model()
+    assert type(model).__name__ == "ChatOpenAI"
+    assert model.model_name == "gpt-4.1-mini"
+    assert str(model.root_client.base_url) == "https://api.openai.com/v1/"
+
+
+def test_llm_model_kiest_azure_met_endpoint(monkeypatch: pytest.MonkeyPatch) -> None:
+    for naam in LLM_OMGEVING:
+        monkeypatch.setenv(naam, "")
+    monkeypatch.setenv("AZURE_OPENAI_ENDPOINT", "https://voorbeeld.openai.azure.com")
+    monkeypatch.setenv("AZURE_OPENAI_DEPLOYMENT", "assistent")
+    monkeypatch.setenv("AZURE_OPENAI_API_KEY", "nep-sleutel-alleen-voor-test")
+    monkeypatch.setenv("OPENAI_API_VERSION", "2024-10-21")
+    model = llm_model()
+    assert type(model).__name__ == "AzureChatOpenAI"
+    assert model.deployment_name == "assistent"
+    assert str(model.root_client.base_url).startswith(
+        "https://voorbeeld.openai.azure.com/openai/deployments/assistent"
+    )
