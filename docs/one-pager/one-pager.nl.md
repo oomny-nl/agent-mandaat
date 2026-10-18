@@ -15,8 +15,8 @@ Michael Owen Meijer, Oomny B.V. · identity-architect en AI-engineer voor overhe
 
 AI-agents krijgen toegang tot dossiers, mailboxen en vakapplicaties. Vaak met het token van de
 gebruiker, een gedeeld API-geheim of een serviceaccount met brede rechten. Dan kan een
-gemanipuleerde agent alles wat die identiteit kan, en is achteraf niet te zien of de mens of de
-agent handelde.
+gemanipuleerde agent alles wat die identiteit kan, en zien de logs van dat systeem niet of de mens
+of de agent handelde.
 
 ## De aanpak
 
