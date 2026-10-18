@@ -1,4 +1,4 @@
-"""Levenscyclus van het mandaat: intrekken, vervangen, generatiebinding, noodstop, offboarding."""
+"""Levenscyclus van het mandaat: intrekken, vervangen, binding aan iat, noodstop, offboarding."""
 
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ from collections.abc import Iterator
 from typing import Any
 
 import httpx2
+import jwt
 import pytest
 
 from mandaat.agent.makelaar import Makelaar, MandaatGeweigerd
@@ -109,31 +110,69 @@ def test_offboarding_medewerker(
         admin.put(pad, json={**gebruiker, "enabled": True})
 
 
-def test_auditketen_intact_en_compleet(inst: Instellingen) -> None:
+def _auditlog(inst: Instellingen) -> list[dict[str, Any]]:
     db = sqlite3.connect(f"file:{inst.db_pad}?mode=ro", uri=True)
     db.row_factory = sqlite3.Row
-    records = [
+    return [
         {"nr": r["nr"], **json.loads(r["record"]), "vorige": r["vorige"], "hash": r["hash"]}
         for r in db.execute("SELECT * FROM audit ORDER BY nr")
     ]
-    assert records, "geen auditrecords; draai deze test na de andere integratietests"
-    assert controleer_tegen_anker(records, lees_anker(inst.anker_pad)) == (True, "intact")
-    assert any(r.get("laag") == "api-beheer" and r["beslissing"] == "geweigerd" for r in records), (
-        "geweigerde beheerverzoeken ontbreken in de audit"
+
+
+def test_auditketen_intact_met_de_eigen_acties(
+    verleen: Any, makelaar: Makelaar, inst: Instellingen
+) -> None:
+    """Registratie, toolactie en een geweigerd beheerverzoek staan in de keten; die is intact."""
+    sessie = verleen()
+    token = makelaar.gedelegeerd(sessie.subject_token, "dossier:lezen")
+    antwoord = roep(inst, token, "dossier_lezen", {"dossier": "2026-0142"}, makelaar.dpop)
+    assert toolfout(antwoord) is None
+    tweede = httpx2.post(
+        f"{inst.resource_url.rsplit('/', 1)[0]}/mandaten",
+        headers={"Authorization": f"Bearer {sessie.werkplek.beheertoken()}"},
+        timeout=10,
     )
-    for record in records:
-        if record.get("laag") == "api-mandaat":
-            velden = ("medewerker", "agent", "tool", "scope", "dossier", "token_jti", "mandaat")
-            for veld in velden:
-                assert record.get(veld) is not None, (veld, record)
+    assert tweede.status_code == 409, tweede.text
+    records = _auditlog(inst)
+    assert controleer_tegen_anker(records, lees_anker(inst.anker_pad)) == (True, "intact")
+    mandaat = sessie.mandaat["id"]
+    start = next(
+        i
+        for i, r in enumerate(records)
+        if r["beslissing"] == "mandaat_verleend" and r.get("mandaat") == mandaat
+    )
+    na = records[start + 1 :]
+    actie = [r for r in na if r.get("token_jti") == token.jti]
+    assert [(r["beslissing"], r["reden"], r["mandaat"]) for r in actie] == [
+        ("toegestaan", "binnen_mandaat", mandaat)
+    ]
+    for veld in ("medewerker", "agent", "tool", "scope", "dossier", "dpop_jkt", "gebruiker"):
+        assert actie[0].get(veld) is not None, (veld, actie[0])
+    assert any(
+        r.get("laag") == "api-beheer"
+        and r["beslissing"] == "geweigerd"
+        and r.get("tool") == "mandaat verlenen"
+        and r.get("medewerker") == actie[0]["medewerker"]
+        for r in na
+    )
 
 
-def test_keycloak_logt_geweigerde_exchanges(admin: httpx2.Client, inst: Instellingen) -> None:
+def test_keycloak_logt_geweigerde_exchanges(
+    admin: httpx2.Client, inst: Instellingen, verleen: Any, makelaar: Makelaar
+) -> None:
+    """De geweigerde besluit-exchange staat in de Keycloak-events: agent, medewerker, sessie."""
+    sessie = verleen()
+    with pytest.raises(MandaatGeweigerd):
+        makelaar.gedelegeerd(sessie.subject_token, "besluit:nemen")
+    claims = jwt.decode(sessie.subject_token, options={"verify_signature": False})
     events = admin.get(
-        f"/{inst.realm}/events", params={"type": "TOKEN_EXCHANGE_ERROR", "max": 100}
+        f"/{inst.realm}/events",
+        params={"type": "TOKEN_EXCHANGE_ERROR", "user": claims["sub"], "max": 100},
     ).json()
-    besluit = [e for e in events if "besluit:nemen" in str(e.get("details", {}).get("reason"))]
-    assert besluit, "geweigerde besluit-exchange ontbreekt in de Keycloak-events"
-    details = besluit[0]["details"]
+    eigen = [e for e in events if e.get("sessionId") == claims["sid"]]
+    assert eigen, "geweigerde besluit-exchange ontbreekt in de Keycloak-events"
+    details = eigen[0]["details"]
+    assert "besluit:nemen" in details["reason"]
     assert details["actor"] == inst.agent_id
+    assert details["username"] == "sanne"
     assert details["subject_token_client_id"] == inst.werkplek_id

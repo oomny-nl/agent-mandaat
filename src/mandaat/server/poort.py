@@ -2,13 +2,18 @@
 
 Elk verzoek naar `/mcp` (ook `initialize` en `tools/list`) vraagt een geldig, actief,
 DPoP-gebonden token van een toegelaten agent. Bij `tools/call` controleert de poort ook of het token
-de scope van die tool heeft (`403 insufficient_scope`). De mandaatcontrole en het eenmalig gebruik
-van het token gebeuren daarna in de tool zelf, in één transactie met de actie.
+de scope van die tool heeft (`403 insufficient_scope`). Daarna kent de tool zelf twee atomaire
+stappen: mandaatcontrole plus reservering van het token in één transactie, en vervolgens de
+wijziging plus haar auditrecord in één transactie.
+
+Het DPoP-bewijs wordt vergeleken met de URI van het ontvangen verzoek (schema, `Host` en pad), niet
+met een vaste URL. Een verzoek mag maar één `Authorization`- en één `DPoP`-header hebben.
 """
 
 from __future__ import annotations
 
 import json
+import unicodedata
 from collections.abc import Callable
 from typing import Any
 
@@ -16,14 +21,23 @@ import anyio
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from mandaat.server.opslag import Opslag
-from mandaat.server.tokens import Tokencontrole, TokenFout
+from mandaat.server.tokens import Tokencontrole, TokenFout, actor
 
 DPOP_ALGS = "ES256"
 
 
+def _headertekst(tekst: str) -> str:
+    """Tekst binnen de tekenset van `error_description` (RFC 6750 §3): ASCII zonder `"` en `\\`.
+
+    Accenten vallen weg ("één" wordt "een"); de JSON-body houdt de volledige tekst.
+    """
+    ascii_tekst = unicodedata.normalize("NFKD", tekst).encode("ascii", "ignore").decode()
+    return "".join(t for t in ascii_tekst.replace('"', "'") if " " <= t <= "~" and t != "\\")
+
+
 def challenge(schema: str, fout: TokenFout, metadata_url: str, scope: str | None = None) -> str:
     """Bouw een WWW-Authenticate-waarde (RFC 6750 §3, RFC 9449 §7.1, RFC 9728 §5.1)."""
-    beschrijving = fout.reden.replace('"', "'")
+    beschrijving = _headertekst(fout.reden)
     delen = [f'error="{fout.code}"', f'error_description="{beschrijving}"']
     if schema == "DPoP":
         delen.insert(0, f'algs="{DPOP_ALGS}"')
@@ -40,7 +54,8 @@ class TeGroot(Exception):
     """Verzoek groter dan MAX_BODY."""
 
 
-async def _lees_body(receive: Receive) -> bytes:
+async def lees_body(receive: Receive) -> bytes:
+    """Lees de volledige body; `TeGroot` boven MAX_BODY."""
     delen: list[bytes] = []
     grootte = 0
     while True:
@@ -52,6 +67,36 @@ async def _lees_body(receive: Receive) -> bytes:
         delen.append(deel)
         if not bericht.get("more_body"):
             return b"".join(delen)
+
+
+ENKELVOUDIG = {
+    "authorization": ("invalid_request", 400),
+    "dpop": ("invalid_dpop_proof", 401),  # RFC 9449 §4.3 punt 1
+}
+
+
+def koppen(ruw: list[tuple[bytes, bytes]]) -> dict[str, str]:
+    """ASGI-headers als dict, met een harde eis op enkelvoudige authenticatieheaders.
+
+    Header-bytes worden als latin-1 gelezen (zoals HTTP ze definieert), zodat willekeurige bytes
+    nooit tot een serverfout leiden; een ongeldig token of bewijs faalt daarna in de controle.
+
+    Raises:
+        TokenFout: Als `Authorization` of `DPoP` meer dan één keer voorkomt.
+    """
+    uitkomst: dict[str, str] = {}
+    for naam_ruw, waarde_ruw in ruw:
+        naam = naam_ruw.decode("latin-1").lower()
+        if naam in uitkomst and naam in ENKELVOUDIG:
+            code, status = ENKELVOUDIG[naam]
+            raise TokenFout(f"header {naam} komt meer dan één keer voor", code, status)
+        uitkomst[naam] = waarde_ruw.decode("latin-1")
+    return uitkomst
+
+
+def ontvangen_uri(scope: Scope, kop: dict[str, str]) -> str:
+    """URI van het ontvangen verzoek zonder query: schema, `Host` en pad."""
+    return f"{scope['scheme']}://{kop.get('host', '')}{scope['path']}"
 
 
 def _toolaanroep(body: bytes) -> tuple[str | None, str | None]:
@@ -110,11 +155,13 @@ class Agentpoort:
         )
         await send({"type": "http.response.body", "body": body})
 
-    def _controleer(
-        self, headers: dict[str, str], methode: str, tool: str | None
-    ) -> dict[str, Any]:
+    def _controleer(self, scope: Scope, tool: str | None) -> dict[str, Any]:
+        kop = koppen(scope["headers"])
         gecontroleerd = self.controle().agenttoken(
-            headers.get("authorization", ""), headers.get("dpop"), methode
+            kop.get("authorization", ""),
+            kop.get("dpop"),
+            scope["method"],
+            ontvangen_uri(scope, kop),
         )
         bewijs = gecontroleerd.bewijs
         claims = gecontroleerd.claims
@@ -147,7 +194,7 @@ class Agentpoort:
                 "fout": fout.code,
                 "medewerker": sub,
                 "gebruiker": self.opslag().gebruiker_voor_sub(sub) if sub else None,
-                "agent": (fout.claims.get("act") or {}).get("client_id"),
+                "agent": actor(fout.claims),
                 "token_jti": fout.claims.get("jti"),
             }
         )
@@ -157,18 +204,22 @@ class Agentpoort:
         if scope["type"] != "http" or not scope["path"].startswith("/mcp"):
             await self.app(scope, receive, send)
             return
-        headers = {k.decode().lower(): v.decode() for k, v in scope["headers"]}
         try:
-            body = await _lees_body(receive)
+            body = await lees_body(receive)
         except TeGroot:
+            record = {
+                "beslissing": "geweigerd",
+                "laag": "api-poort",
+                "reden": f"verzoek groter dan {MAX_BODY} bytes",
+                "fout": "te_groot",
+            }
+            await anyio.to_thread.run_sync(self.opslag().audit, record)
             await send({"type": "http.response.start", "status": 413, "headers": []})
             await send({"type": "http.response.body", "body": b""})
             return
         tool, dossier = _toolaanroep(body)
         try:
-            claims = await anyio.to_thread.run_sync(
-                self._controleer, headers, scope["method"], tool
-            )
+            claims = await anyio.to_thread.run_sync(self._controleer, scope, tool)
         except TokenFout as fout:
             await anyio.to_thread.run_sync(self._audit_weigering, fout, tool, dossier)
             nodig = self.toolscopes.get(tool or "") if fout.code == "insufficient_scope" else None

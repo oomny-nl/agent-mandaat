@@ -61,6 +61,7 @@ class AgentAuth(httpx2.Auth):
         request.headers["DPoP"] = self.makelaar.dpop.bewijs(
             request.method, str(request.url), access_token=token
         )
+        self.laatste_weigering = None
         antwoord = yield request
         if antwoord.status_code in (401, 403):
             self.laatste_weigering = antwoord.headers.get("www-authenticate", "")

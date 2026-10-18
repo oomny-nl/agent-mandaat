@@ -85,26 +85,50 @@ def test_managed_identity_via_container_apps(monkeypatch: pytest.MonkeyPatch) ->
     assert gezien["headers"]["X-IDENTITY-HEADER"] == "geheim-van-het-platform"
 
 
+# Claims per scenario volgens learn.microsoft.com/entra/agent-id/agent-token-claims.
+OBO_NAMENS_MENS = {
+    "idtyp": "user",
+    "xms_idrel": "1",
+    "azp": "agent",
+    "scp": "dossier:lezen",
+    "oid": "medewerker",
+    "xms_act_fct": "3 11",
+}
+
+
 def test_normalisatie_keycloak_en_entra_zelfde_uitkomst() -> None:
     keycloak = normaliseer_keycloak(
         {"sub": "medewerker", "scope": "dossier:lezen", "act": {"client_id": "agent"}}
     )
-    entra = normaliseer_entra(
-        {"oid": "medewerker", "azp": "agent", "scp": "dossier:lezen", "xms_act_fct": "x"},
-        frozenset({"agent"}),
-    )
+    entra = normaliseer_entra(OBO_NAMENS_MENS, frozenset({"agent"}))
     assert keycloak == entra
 
 
+def test_entra_v1_token_met_appid() -> None:
+    claims = {k: v for k, v in OBO_NAMENS_MENS.items() if k != "azp"} | {"appid": "agent"}
+    assert normaliseer_entra(claims, frozenset({"agent"})).agent == "agent"
+
+
 @pytest.mark.parametrize(
-    ("claims", "melding"),
+    ("anders", "melding"),
     [
-        ({"oid": "m", "azp": "agent", "scp": "dossier.lezen"}, "xms_act_fct"),
-        ({"oid": "m", "azp": "agent", "xms_act_fct": "x", "roles": ["x"]}, "app-only"),
-        ({"oid": "m", "azp": "vreemd", "scp": "a", "xms_act_fct": "x"}, "niet toegelaten"),
+        ({"xms_act_fct": None}, "AgentIdentity"),
+        ({"xms_act_fct": "3 9"}, "AgentIdentity"),
+        # Autonoom (app-only): idtyp app, onderwerp is de agent identity, scp "/".
+        (
+            {"idtyp": "app", "xms_idrel": "7", "xms_sub_fct": "9 3 11", "scp": "/"},
+            "app-only",
+        ),
+        ({"idtyp": None, "scp": "/"}, "app-only"),
+        ({"scp": ""}, "app-only"),
+        # Het eigen gebruikersaccount van de agent: idtyp user, maar xms_sub_fct 13.
+        ({"xms_sub_fct": "13"}, "gebruikersaccount"),
+        ({"azp": "vreemd"}, "niet toegelaten"),
+        ({"oid": None}, "oid"),
     ],
 )
-def test_entra_weigert(claims: dict[str, Any], melding: str) -> None:
+def test_entra_weigert(anders: dict[str, Any], melding: str) -> None:
+    claims = {k: v for k, v in (OBO_NAMENS_MENS | anders).items() if v is not None}
     with pytest.raises(ValueError, match=melding):
         normaliseer_entra(claims, frozenset({"agent"}))
 

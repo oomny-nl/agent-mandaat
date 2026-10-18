@@ -1,12 +1,14 @@
-"""Mandaatregister, generatiebinding, eenmalig gebruik en auditketen."""
+"""Mandaatregister, binding aan de uitgiftetijd, eenmalig gebruik en auditketen."""
 
 from __future__ import annotations
 
 import json
 import math
+import sqlite3
 import threading
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
@@ -141,19 +143,131 @@ def test_geen_mandaat(opslag: Opslag) -> None:
 def test_gelijktijdig_gebruik_van_een_token(opslag: Opslag) -> None:
     m = mandaat(opslag)
     c = claims(m["geldig_vanaf"])
-    uitkomsten: list[bool] = []
     start = threading.Barrier(16)
 
-    def poging() -> None:
+    def poging(_: int) -> str:
         start.wait()
-        uitkomsten.append(opslag.laat_toe(c, "2026-0142").toegestaan)
+        return opslag.laat_toe(c, "2026-0142").reden
 
-    draden = [threading.Thread(target=poging) for _ in range(16)]
-    for d in draden:
-        d.start()
-    for d in draden:
-        d.join()
-    assert uitkomsten.count(True) == 1
+    # map() geeft elke uitzondering in een draad door; zo telt een gecrashte poging niet stil mee.
+    with ThreadPoolExecutor(16) as pool:
+        redenen = list(pool.map(poging, range(16)))
+    assert sorted(redenen) == ["binnen_mandaat"] + ["token_al_gebruikt"] * 15
+
+
+def test_registratie_en_intrekking_schrijven_hun_audit_mee(tmp_path: Path) -> None:
+    opslag = _met_anker(tmp_path)
+    gegevens = {
+        "medewerker": "sub-sanne",
+        "gebruiker": "sanne",
+        "naam": "",
+        "agent": "dossierassistent",
+        "dossier": "2026-0142",
+        "sid": "sessie-1",
+    }
+    m = opslag.registreer_mandaat(gegevens, set(), audit={"beslissing": "mandaat_verleend"})
+    assert opslag.trek_in(m["id"], "sub-sanne", audit={"beslissing": "mandaat_ingetrokken"})
+    assert not opslag.trek_in(m["id"], "sub-sanne", audit={"beslissing": "mandaat_ingetrokken"})
+    records = opslag.auditlog()
+    assert [(r["beslissing"], r["mandaat"]) for r in records] == [
+        ("mandaat_verleend", m["id"]),
+        ("mandaat_ingetrokken", m["id"]),
+    ]
+    assert controleer_tegen_anker(records, lees_anker(tmp_path / "anker" / "anker.log")) == (
+        True,
+        "intact",
+    )
+
+
+def test_mislukt_auditrecord_draait_de_registratie_terug(opslag: Opslag) -> None:
+    gegevens = {
+        "medewerker": "sub-sanne",
+        "gebruiker": "sanne",
+        "naam": "",
+        "agent": "dossierassistent",
+        "dossier": "2026-0142",
+        "sid": "sessie-1",
+    }
+    with pytest.raises(TypeError):
+        opslag.registreer_mandaat(gegevens, set(), audit={"niet-serialiseerbaar": object()})
+    assert opslag.mandaten() == []
+    assert opslag.auditlog() == []
+
+
+def test_notitie_en_besluit_schrijven_hun_audit_mee(opslag: Opslag) -> None:
+    nr = opslag.voeg_notitie_toe("2026-0142", "t", "sanne", "agent", audit={"beslissing": "ja"})
+    besluit = opslag.leg_besluit_vast("2026-0142", "toegekend", "sanne", audit={"beslissing": "ja"})
+    assert [(r.get("notitie"), r.get("besluit")) for r in opslag.auditlog()] == [
+        (nr, None),
+        (None, besluit),
+    ]
+
+
+def test_mislukte_wijziging_laat_geen_toegestaan_achter(opslag: Opslag) -> None:
+    opslag._db.execute("DROP TABLE besluiten")
+    with pytest.raises(sqlite3.OperationalError):
+        opslag.leg_besluit_vast("2026-0142", "toegekend", "sanne", audit={"beslissing": "ja"})
+    assert opslag.auditlog() == []
+
+
+def test_mislukt_auditrecord_draait_de_notitie_terug(opslag: Opslag) -> None:
+    with pytest.raises(TypeError):
+        opslag.voeg_notitie_toe("2026-0142", "t", "sanne", "agent", audit={"x": object()})
+    assert opslag.notities("2026-0142") == []
+    assert opslag.auditlog() == []
+
+
+def test_auditketen_blijft_heel_bij_twee_verbindingen(tmp_path: Path) -> None:
+    """Twee processen op één database: BEGIN IMMEDIATE voorkomt een vertakte keten.
+
+    Beide schrijven naar hetzelfde anker. De volgorde van de ankerregels kan dan afwijken van die
+    van de records; keten en anker moeten toch intact zijn.
+    """
+    anker = tmp_path / "anker" / "anker.log"
+    a, b = (Opslag(tmp_path / "gedeeld.db", 2, anker) for _ in range(2))
+    start = threading.Barrier(8)
+
+    def schrijf(i: int) -> None:
+        start.wait()
+        for j in range(25):
+            (a if i % 2 else b).audit({"beslissing": "toegestaan", "i": i, "j": j})
+
+    with ThreadPoolExecutor(8) as pool:
+        list(pool.map(schrijf, range(8)))
+    records = a.auditlog()
+    regels = lees_anker(anker)
+    assert len(records) == 200
+    assert regels is not None
+    assert sorted(nr for nr, _ in regels) == list(range(1, 201))
+    assert controleer_tegen_anker(records, regels) == (True, "intact")
+
+
+def test_anker_in_afwijkende_volgorde_is_intact(tmp_path: Path) -> None:
+    opslag = _met_anker(tmp_path)
+    for i in range(2):
+        opslag.audit({"beslissing": "toegestaan", "i": i})
+    records = opslag.auditlog()
+    omgedraaid = [(r["nr"], r["hash"]) for r in reversed(records)]
+    assert controleer_tegen_anker(records, omgedraaid) == (True, "intact")
+    assert controleer_tegen_anker(records[:1], omgedraaid)[0] is False
+
+
+def test_mislukte_commit_laat_de_verbinding_bruikbaar(tmp_path: Path) -> None:
+    """Een lezer met een open transactie blokkeert COMMIT; daarna moet de opslag gewoon werken."""
+    pad = tmp_path / "m.db"
+    opslag = Opslag(pad, 2)
+    opslag._db.execute("PRAGMA busy_timeout = 100")
+    lezer = sqlite3.connect(pad, isolation_level=None)
+    lezer.execute("BEGIN")
+    lezer.execute("SELECT * FROM audit").fetchall()
+    with pytest.raises(sqlite3.OperationalError, match="locked"):
+        opslag.audit({"beslissing": "toegestaan", "poging": 1})
+    assert not opslag._db.in_transaction
+    lezer.execute("ROLLBACK")
+    lezer.close()
+    record = opslag.audit({"beslissing": "toegestaan", "poging": 2})
+    assert [r["poging"] for r in opslag.auditlog()] == [2]
+    assert record["nr"] == 1
 
 
 def test_dpop_bewijs_eenmalig(opslag: Opslag) -> None:
@@ -205,31 +319,25 @@ def test_dpop_eenmalig_onder_gelijktijdige_lees_en_schrijfacties(opslag: Opslag)
     """Regressie: lezen zonder slot liet een hergebruikt bewijs door en gaf InterfaceError."""
     mandaat(opslag)
     tot = int(time.time()) + 60
-    uitkomsten: list[bool] = []
-    fouten: list[BaseException] = []
     start = threading.Barrier(24)
 
-    def bewijs() -> None:
+    def bewijs() -> bool:
         start.wait()
-        uitkomsten.append(opslag.dpop_bewijs_eenmalig("jkt", "zelfde", tot))
+        return opslag.dpop_bewijs_eenmalig("jkt", "zelfde", tot)
 
     def lezen() -> None:
         start.wait()
-        try:
-            for _ in range(50):
-                opslag.gebruiker_voor_sub("sub-sanne")
-                opslag.auditlog()
-        except BaseException as fout:
-            fouten.append(fout)
+        for _ in range(50):
+            opslag.gebruiker_voor_sub("sub-sanne")
+            opslag.auditlog()
 
-    draden = [threading.Thread(target=bewijs) for _ in range(12)]
-    draden += [threading.Thread(target=lezen) for _ in range(12)]
-    for d in draden:
-        d.start()
-    for d in draden:
-        d.join()
-    assert fouten == []
-    assert uitkomsten.count(True) == 1
+    with ThreadPoolExecutor(24) as pool:
+        bewijzen = [pool.submit(bewijs) for _ in range(12)]
+        lezers = [pool.submit(lezen) for _ in range(12)]
+        uitkomsten = [f.result() for f in bewijzen]  # een fout in een draad faalt hier de test
+        for f in lezers:
+            f.result()
+    assert sorted(uitkomsten) == [False] * 11 + [True]
 
 
 def test_registratie_met_verouderde_sessiecontrole(opslag: Opslag) -> None:

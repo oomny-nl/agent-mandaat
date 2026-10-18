@@ -7,6 +7,15 @@ de toelating commit, blokkeert de actie; een toegelaten actie voltooit.
 Het auditlog is een hashketen: elk record bevat de hash van het vorige. Wijzigen of weglaten van
 een record breekt de keten. Dat is tamper-evident, niet tamper-proof: wie het hele bestand kan
 herschrijven, kan ook de keten herberekenen. In productie hoort het log in WORM-opslag.
+
+Een auditrecord wordt in één `BEGIN IMMEDIATE`-transactie aan de keten gehangen (vorige hash lezen
+en record toevoegen), ook vanuit een tweede verbinding of proces. Registratie en intrekking van een
+mandaat, een notitie en een besluit schrijven hun auditrecord in dezelfde transactie als de
+wijziging: er is geen wijziging zonder record en geen `toegestaan` zonder wijziging. Het anker
+volgt na de commit; faalt dat schrijven, dan is het laatste record niet verankerd en keurt de
+controle het log af. Schrijven twee verbindingen tegelijk, dan kan de volgorde van de ankerregels
+afwijken van die van de records (eerst 2, dan 1); de controle gebruikt daarom het hoogste verankerde
+nummer, niet de laatste regel.
 """
 
 from __future__ import annotations
@@ -20,6 +29,8 @@ import sqlite3
 import threading
 import time
 import uuid
+from collections.abc import Generator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -97,18 +108,43 @@ class Opslag:
         with self._slot:
             return self._db.execute(sql, params).fetchall()
 
+    @contextmanager
+    def _transactie(self) -> Generator[None]:
+        """Schrijftransactie onder het slot; bij een uitzondering wordt alles teruggedraaid.
+
+        Ook een mislukte COMMIT (bijvoorbeeld `database is locked`) draait terug: SQLite laat de
+        transactie dan open, en zonder ROLLBACK zou elk volgend verzoek op deze verbinding falen.
+        De oorspronkelijke fout gaat door naar de aanroeper.
+        """
+        with self._slot:
+            self._db.execute("BEGIN IMMEDIATE")
+            try:
+                yield
+                self._db.execute("COMMIT")
+            except BaseException as fout:
+                if self._db.in_transaction:
+                    try:
+                        self._db.execute("ROLLBACK")
+                    except sqlite3.Error as terugdraaien:
+                        fout.add_note(f"ROLLBACK na deze fout mislukte ook: {terugdraaien}")
+                raise
+
     # Mandaten ---------------------------------------------------------------------------------
 
     def registreer_mandaat(
-        self, gegevens: dict[str, str], gecontroleerde_sessies: set[str]
+        self,
+        gegevens: dict[str, str],
+        gecontroleerde_sessies: set[str],
+        audit: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        """Registreer een mandaat; een eerder actief mandaat (zelfde medewerker en agent) vervalt.
+        """Registreer een mandaat, met zijn auditrecord in dezelfde transactie.
 
         Args:
             gegevens: `medewerker` (sub), `gebruiker`, `naam`, `agent`, `dossier` en `sid`.
             gecontroleerde_sessies: De sessies van eerdere mandaten die de aanroeper zojuist bij
                 Keycloak als beëindigd heeft gecontroleerd. Wijkt de historie in de transactie
                 daarvan af, dan volgt `HistorieGewijzigd`: de controle was niet meer actueel.
+            audit: Auditrecord voor de registratie; het mandaat-id wordt toegevoegd.
 
         Returns:
             Het geregistreerde mandaat.
@@ -126,8 +162,7 @@ class Opslag:
             "status": "actief",
         }
         with self._slot:
-            self._db.execute("BEGIN IMMEDIATE")
-            try:
+            with self._transactie():
                 if self._db.execute(
                     "SELECT 1 FROM mandaten WHERE sid = ?", (gegevens["sid"],)
                 ).fetchone():
@@ -153,25 +188,40 @@ class Opslag:
                     ":naam, :agent, :dossier, :sid, :verleend_om, :geldig_vanaf, :status)",
                     mandaat,
                 )
-                self._db.execute("COMMIT")
-            except BaseException:
-                self._db.execute("ROLLBACK")
-                raise
+                record = None
+                if audit is not None:
+                    record = self._schrijf_audit({**audit, "mandaat": mandaat["id"]})
+            if record is not None:
+                self._veranker(record["nr"], record["hash"])
         return mandaat
 
-    def trek_in(self, mandaat_id: str, medewerker: str) -> bool:
+    def trek_in(
+        self, mandaat_id: str, medewerker: str, audit: dict[str, Any] | None = None
+    ) -> bool:
         """Trek een actief mandaat in; alleen de eigenaar (sub) mag dat.
+
+        Args:
+            mandaat_id: Id van het mandaat.
+            medewerker: `sub` van de aanvrager; moet de eigenaar zijn.
+            audit: Auditrecord voor de intrekking, in dezelfde transactie geschreven.
 
         Returns:
             True als een actief mandaat van deze medewerker is ingetrokken.
         """
         with self._slot:
-            cursor = self._db.execute(
-                "UPDATE mandaten SET status = 'ingetrokken', ingetrokken_om = ? "
-                "WHERE id = ? AND medewerker = ? AND status = 'actief'",
-                (time.time(), mandaat_id, medewerker),
-            )
-        return cursor.rowcount == 1
+            with self._transactie():
+                cursor = self._db.execute(
+                    "UPDATE mandaten SET status = 'ingetrokken', ingetrokken_om = ? "
+                    "WHERE id = ? AND medewerker = ? AND status = 'actief'",
+                    (time.time(), mandaat_id, medewerker),
+                )
+                ingetrokken = cursor.rowcount == 1
+                record = None
+                if ingetrokken and audit is not None:
+                    record = self._schrijf_audit({**audit, "mandaat": mandaat_id})
+            if record is not None:
+                self._veranker(record["nr"], record["hash"])
+        return ingetrokken
 
     def eerdere_sessies(self, medewerker: str, agent: str) -> set[str]:
         """Keycloak-sessies (sid) van alle eerdere mandaten van deze medewerker en agent."""
@@ -271,48 +321,78 @@ class Opslag:
 
     # Gegevens ---------------------------------------------------------------------------------
 
-    def voeg_notitie_toe(self, dossier: str, tekst: str, namens: str, door: str) -> int:
-        """Sla een notitie op; geeft het notitienummer."""
+    def _voeg_toe_met_audit(
+        self, sql: str, params: tuple[Any, ...], audit: dict[str, Any] | None, veld: str
+    ) -> int:
+        """Insert plus auditrecord (met het nieuwe nummer in `veld`) in één transactie."""
         with self._slot:
-            cursor = self._db.execute(
-                "INSERT INTO notities (dossier, tekst, namens, door, tijd) VALUES (?, ?, ?, ?, ?)",
-                (dossier, tekst, namens, door, nu_iso()),
-            )
-        return int(cursor.lastrowid or 0)
+            with self._transactie():
+                nr = int(self._db.execute(sql, params).lastrowid or 0)
+                record = self._schrijf_audit({**audit, veld: nr}) if audit is not None else None
+            if record is not None:
+                self._veranker(record["nr"], record["hash"])
+        return nr
+
+    def voeg_notitie_toe(
+        self, dossier: str, tekst: str, namens: str, door: str, audit: dict[str, Any] | None = None
+    ) -> int:
+        """Sla een notitie op, met het auditrecord van de toelating in dezelfde transactie.
+
+        Returns:
+            Het notitienummer; het auditrecord krijgt het als `notitie`.
+        """
+        return self._voeg_toe_met_audit(
+            "INSERT INTO notities (dossier, tekst, namens, door, tijd) VALUES (?, ?, ?, ?, ?)",
+            (dossier, tekst, namens, door, nu_iso()),
+            audit,
+            "notitie",
+        )
 
     def notities(self, dossier: str) -> list[dict[str, Any]]:
         """Notities bij een dossier."""
         rijen = self._lees("SELECT * FROM notities WHERE dossier = ? ORDER BY nr", (dossier,))
         return [dict(r) for r in rijen]
 
-    def leg_besluit_vast(self, dossier: str, uitkomst: str, door: str) -> int:
-        """Leg een besluit vast (alleen door een medewerker zelf)."""
-        with self._slot:
-            cursor = self._db.execute(
-                "INSERT INTO besluiten (dossier, uitkomst, door, tijd) VALUES (?, ?, ?, ?)",
-                (dossier, uitkomst, door, nu_iso()),
-            )
-        return int(cursor.lastrowid or 0)
+    def leg_besluit_vast(
+        self, dossier: str, uitkomst: str, door: str, audit: dict[str, Any] | None = None
+    ) -> int:
+        """Leg een besluit van een medewerker zelf vast, met zijn auditrecord in één transactie.
+
+        Returns:
+            Het besluitnummer; het auditrecord krijgt het als `besluit`.
+        """
+        return self._voeg_toe_met_audit(
+            "INSERT INTO besluiten (dossier, uitkomst, door, tijd) VALUES (?, ?, ?, ?)",
+            (dossier, uitkomst, door, nu_iso()),
+            audit,
+            "besluit",
+        )
 
     # Audit ------------------------------------------------------------------------------------
 
     def audit(self, record: dict[str, Any]) -> dict[str, Any]:
-        """Voeg een record toe aan de hashketen.
+        """Voeg een record toe aan de hashketen, in een eigen transactie.
 
         Returns:
             Het record met `nr`, `vorige` en `hash`.
         """
-        record = {"tijd": nu_iso(), **record}
         with self._slot:
-            laatste = self._db.execute("SELECT hash FROM audit ORDER BY nr DESC LIMIT 1").fetchone()
-            vorige = laatste["hash"] if laatste else GENESIS
-            h = ketenhash(vorige, record)
-            cursor = self._db.execute(
-                "INSERT INTO audit (record, vorige, hash) VALUES (?, ?, ?)",
-                (json.dumps(record, ensure_ascii=False, sort_keys=True), vorige, h),
-            )
-            self._veranker(int(cursor.lastrowid or 0), h)
-        return {"nr": cursor.lastrowid, **record, "vorige": vorige, "hash": h}
+            with self._transactie():
+                geschreven = self._schrijf_audit(record)
+            self._veranker(geschreven["nr"], geschreven["hash"])
+        return geschreven
+
+    def _schrijf_audit(self, record: dict[str, Any]) -> dict[str, Any]:
+        """Hang een record aan de keten; alleen binnen een lopende `_transactie`."""
+        record = {"tijd": nu_iso(), **record}
+        laatste = self._db.execute("SELECT hash FROM audit ORDER BY nr DESC LIMIT 1").fetchone()
+        vorige = laatste["hash"] if laatste else GENESIS
+        h = ketenhash(vorige, record)
+        cursor = self._db.execute(
+            "INSERT INTO audit (record, vorige, hash) VALUES (?, ?, ?)",
+            (json.dumps(record, ensure_ascii=False, sort_keys=True), vorige, h),
+        )
+        return {"nr": int(cursor.lastrowid or 0), **record, "vorige": vorige, "hash": h}
 
     def _veranker(self, nr: int, h: str) -> None:
         """Schrijf de ketenkop naar een apart bestand (eigen volume) en naar het log."""
@@ -374,7 +454,7 @@ def _vergelijk_anker(
             return False, f"record {nr} staat in het anker maar ontbreekt in het log"
         if hashes[nr] != h:
             return False, f"record {nr} wijkt af van het anker"
-    if anker and records and records[-1]["nr"] != anker[-1][0]:
+    if anker and records and records[-1]["nr"] != max(nr for nr, _ in anker):
         return False, "log en anker eindigen niet op hetzelfde record"
     return True, "intact"
 

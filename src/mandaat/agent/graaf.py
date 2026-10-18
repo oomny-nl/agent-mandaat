@@ -3,6 +3,7 @@
 De toolknoop haalt voor elke toolactie eerst een eigen gedelegeerd token op met precies de scope
 van die tool (de scope staat in de toolmetadata van de MCP-server). Weigert Keycloak het token,
 dan bereikt de aanroep de API niet eens. Weigert de API, dan komt de reden terug als toolfout.
+Een andere fout (netwerk, protocol, onverwachte serverfout) heet geen weigering maar een fout.
 """
 
 from __future__ import annotations
@@ -89,18 +90,18 @@ class Gereedschap:
         self.auth.volgende = token
         try:
             resultaat = await self.client.call_tool(naam, argumenten)
-        except MCPError:
-            # De poort van de API weigerde het verzoek op HTTP-niveau (401 of 403).
-            tekst, fout_ = (
-                f"GEWEIGERD door de dossier-API: {_reden(self.auth.laatste_weigering)}",
-                True,
-            )
+        except MCPError as fout:
+            weigering = self.auth.laatste_weigering
+            if weigering is not None:
+                # De poort van de API weigerde het verzoek op HTTP-niveau (401 of 403).
+                tekst = f"GEWEIGERD door de dossier-API: {_reden(weigering)}"
+            else:
+                tekst = f"FOUT bij de dossier-API (geen weigering): {fout}"
+            fout_ = True
         else:
             tekst = "\n".join(getattr(d, "text", "") for d in resultaat.content)
             fout_ = bool(resultaat.is_error)
-        self.waarnemer(
-            {"soort": "api_weigert" if fout_ else "resultaat", "tool": naam, "tekst": tekst}
-        )
+        self.waarnemer({"soort": _soort(fout_, tekst), "tool": naam, "tekst": tekst})
         return ToolMessage(
             tekst,
             tool_call_id=oproep_id,
@@ -108,6 +109,18 @@ class Gereedschap:
             status="error" if fout_ else "success",
             additional_kwargs=extra,
         )
+
+
+# De MCP SDK zet dit voor de tekst van elke toolfout, ook voor een weigering van de tool zelf.
+SDK_TOOLFOUT = re.compile(r"Error executing tool \S+: ")
+
+
+def _soort(fout: bool, tekst: str) -> str:
+    """Soort gebeurtenis: resultaat, weigering door de API of een andere fout."""
+    if not fout:
+        return "resultaat"
+    kern = tekst[m.end() :] if (m := SDK_TOOLFOUT.match(tekst)) else tekst
+    return "api_weigert" if kern.startswith("GEWEIGERD door ") else "api_fout"
 
 
 def _reden(challenge: str | None) -> str:

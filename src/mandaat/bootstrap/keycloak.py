@@ -1,8 +1,10 @@
 """Richt de realm `lindevoort` in via de Keycloak Admin REST API.
 
-Idempotent: bestaat de realm al, dan verandert er niets (een nieuwe realm zou nieuwe sleutels
-krijgen terwijl de API de oude kent). `make demo` begint met `docker compose down -v`, dus elke
-demo start vanuit dezelfde begintoestand. De FGAP v2-permissie en de client policy
+Idempotent: bestaat de realm al en is de inrichting afgerond (markering in de geheimenmap), dan
+verandert er niets (een nieuwe realm zou nieuwe sleutels krijgen terwijl de API de oude kent).
+Bestaat de realm maar ontbreekt de markering, dan brak een eerdere inrichting af: de realm wordt
+verwijderd en opnieuw ingericht. `make demo` begint met `docker compose down -v`, dus elke demo
+start vanuit dezelfde begintoestand. De FGAP v2-permissie en de client policy
 met de `may-act` executor gaan via de API omdat ze niet betrouwbaar via een realm-import lopen.
 """
 
@@ -23,6 +25,7 @@ from mandaat.geheimen import Geheimen
 TOOLSCOPES = ("dossier:lezen", "notitie:schrijven", "besluit:nemen")
 AGENTSCOPES = ("dossier:lezen", "notitie:schrijven")
 TOKEN_LEVENSDUUR_AGENT_S = 60
+MARKERING = "realm-ingericht"
 
 GEBRUIKERS = (
     {"username": "sanne", "firstName": "Sanne", "lastName": "de Vries", "rol": "klantmanager"},
@@ -369,14 +372,20 @@ def main() -> None:
         os.environ.get("KC_BOOTSTRAP_ADMIN_USERNAME", "admin"),
         os.environ["KC_BOOTSTRAP_ADMIN_PASSWORD"],
     )
-    if admin.get(f"/{inst.realm}").status_code == 200:
-        print(f"Realm {inst.realm} bestaat al; inrichting overgeslagen")
-        return
+    markering = inst.geheimen_dir / MARKERING
     try:
+        if admin.get(f"/{inst.realm}").status_code == 200:
+            if markering.exists():
+                print(f"Realm {inst.realm} bestaat al en is ingericht; inrichting overgeslagen")
+                return
+            print(f"Realm {inst.realm} is niet volledig ingericht; opnieuw inrichten")
+            _controleer(admin.delete(f"/{inst.realm}"), "onvolledige realm verwijderen")
+        markering.unlink(missing_ok=True)
         richt_in(inst, geheimen, admin)
     except BootstrapFout as fout:
         print(f"Inrichting mislukt: {fout}", file=sys.stderr)
         raise SystemExit(1) from fout
+    markering.write_text(f"{inst.realm}\n")
     print(f"Realm {inst.realm} ingericht op {inst.keycloak_url}")
 
 

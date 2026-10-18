@@ -59,6 +59,8 @@ def test_vervanging_vereist_beeindigde_oude_sessie(
             f"{api}/mandaten", headers={"Authorization": f"Bearer {b.beheertoken()}"}, timeout=10
         )
         assert poging.status_code == 409, poging.text
+        assert "sessie van een eerder mandaat" in poging.json()["error"]
+        assert "sessie van een eerder mandaat" in str(_audit(inst)[-1].get("reden"))
         a.log_uit()
         mandaat_b = b.registreer_mandaat()
         assert mandaat_b["dossier"] == "2026-0143"
@@ -66,6 +68,38 @@ def test_vervanging_vereist_beeindigde_oude_sessie(
             makelaar.gedelegeerd(subject_a, "dossier:lezen")
     finally:
         a.log_uit()
+        if mandaat_b is not None:
+            b.trek_in(mandaat_b["id"])
+        b.log_uit()
+
+
+def test_parallelle_werkpleksessie_blokkeert_registratie(
+    inst: Instellingen, geheimen: Geheimen, makelaar: Makelaar
+) -> None:
+    """Een tweede werkpleksessie zonder mandaat blokkeert registratie tot zij is uitgelogd.
+
+    Het gedelegeerde token draagt geen `sid`. Zonder deze controle zou het subject token van de
+    parallelle sessie (taak 2026-0142) tokens opleveren die onder mandaat B (2026-0143) vallen.
+    """
+    api = inst.resource_url.rsplit("/", 1)[0]
+    parallel = Werkplek(inst, "sanne", geheimen.wachtwoord("sanne"))
+    parallel.login("2026-0142")
+    subject_parallel = parallel.subject_token()
+    b = Werkplek(inst, "sanne", geheimen.wachtwoord("sanne"))
+    b.login("2026-0143")
+    mandaat_b: dict[str, Any] | None = None
+    try:
+        poging = httpx2.post(
+            f"{api}/mandaten", headers={"Authorization": f"Bearer {b.beheertoken()}"}, timeout=10
+        )
+        assert poging.status_code == 409, poging.text
+        assert "andere werkpleksessie" in poging.json()["error"]
+        parallel.log_uit()
+        mandaat_b = b.registreer_mandaat()
+        with pytest.raises(MandaatGeweigerd):
+            makelaar.gedelegeerd(subject_parallel, "dossier:lezen")
+    finally:
+        parallel.log_uit()
         if mandaat_b is not None:
             b.trek_in(mandaat_b["id"])
         b.log_uit()
@@ -343,4 +377,3 @@ def test_beheerweigeringen_staan_in_de_audit(
         and sanne.mandaat["id"] in str(r.get("tool"))
         for r in records
     )
-    assert any("sessie van een eerder mandaat" in str(r.get("reden")) for r in records)

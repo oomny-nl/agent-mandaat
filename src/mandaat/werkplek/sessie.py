@@ -6,7 +6,8 @@ subject token, en dat heeft als audience uitsluitend de agent zelf.
 
 Inloggen gebeurt headless: deze code vult het Keycloak-loginformulier in en klikt op het
 toestemmingsscherm op "Ja", precies zoals een browser dat doet. Er wordt geen password grant
-gebruikt; het is de gewone authorization code flow met PKCE en consent.
+gebruikt; het is de gewone authorization code flow met PKCE en consent. Het antwoord op de
+redirect-URI moet dezelfde `state` dragen als het verzoek en de juiste `iss` (RFC 9207).
 """
 
 from __future__ import annotations
@@ -18,7 +19,7 @@ import re
 import secrets
 from dataclasses import dataclass, field
 from typing import Any
-from urllib.parse import parse_qs, urljoin, urlparse
+from urllib.parse import parse_qs, urljoin, urlsplit
 
 import httpx2
 
@@ -27,6 +28,7 @@ from mandaat.config import Instellingen
 FORM_ACTIE = re.compile(r'<form[^>]*action="([^"]+)"')
 VERBORGEN = re.compile(r'<input[^>]*type="hidden"[^>]*name="([^"]+)"[^>]*value="([^"]*)"')
 TEKST = re.compile(r"<[^>]+>")
+MAX_DOORVERWIJZINGEN = 10
 
 
 class WerkplekFout(RuntimeError):
@@ -89,12 +91,44 @@ class Werkplek:
         browser.event_hooks["response"] = [onveilig_toestaan]
         return browser
 
+    def _is_callback(self, locatie: str) -> bool:
+        doel, verwacht = urlsplit(locatie), urlsplit(self.inst.redirect_uri)
+        return (doel.scheme, doel.netloc, doel.path) == (
+            verwacht.scheme,
+            verwacht.netloc,
+            verwacht.path,
+        )
+
     def _naar_callback(self, browser: httpx2.Client, antwoord: httpx2.Response) -> httpx2.Response:
-        while (
-            antwoord.status_code in (302, 303) and "/callback" not in antwoord.headers["location"]
-        ):
-            antwoord = browser.get(urljoin(str(antwoord.url), antwoord.headers["location"]))
-        return antwoord
+        """Volg doorverwijzingen binnen Keycloak tot de redirect-URI of een pagina."""
+        for _ in range(MAX_DOORVERWIJZINGEN):
+            locatie = antwoord.headers.get("location", "")
+            if antwoord.status_code not in (302, 303) or self._is_callback(locatie):
+                return antwoord
+            antwoord = browser.get(urljoin(str(antwoord.url), locatie))
+        raise WerkplekFout(f"meer dan {MAX_DOORVERWIJZINGEN} doorverwijzingen tijdens het inloggen")
+
+    def autorisatiecode(self, antwoord: httpx2.Response, state: str) -> str:
+        """Autorisatiecode uit het antwoord op de redirect-URI, na controle van state en iss.
+
+        Raises:
+            WerkplekFout: Bij een ander antwoord, een afwijkende `state` of `iss`, of een fout
+                van Keycloak.
+        """
+        locatie = antwoord.headers.get("location", "")
+        if antwoord.status_code not in (302, 303) or not self._is_callback(locatie):
+            raise WerkplekFout(f"geen autorisatiecode ontvangen (HTTP {antwoord.status_code})")
+        params = {k: v[0] for k, v in parse_qs(urlsplit(locatie).query).items()}
+        if not secrets.compare_digest(params.get("state", ""), state):
+            raise WerkplekFout("state in het antwoord wijkt af; inloggen afgebroken")
+        if params.get("iss") != self.inst.issuer:
+            raise WerkplekFout(f"iss in het antwoord is {params.get('iss')!r}, niet de realm")
+        if "error" in params:
+            beschrijving = params.get("error_description", "")
+            raise WerkplekFout(f"Keycloak weigerde: {params['error']} {beschrijving}".strip())
+        if not params.get("code"):
+            raise WerkplekFout("antwoord op de redirect-URI zonder autorisatiecode")
+        return params["code"]
 
     def login(self, taak: str, extra_scopes: tuple[str, ...] = ()) -> Tokens:
         """Log in met PKCE, geef toestemming voor de agent en de taak, en bewaar de sessie.
@@ -117,36 +151,37 @@ class Werkplek:
             )
         )
         verifier, challenge = _pkce()
-        browser = self._browser()
-        antwoord = browser.get(
-            f"{self.inst.oidc}/auth",
-            params={
-                "client_id": self.inst.werkplek_id,
-                "response_type": "code",
-                "redirect_uri": self.inst.redirect_uri,
-                "scope": scope,
-                "code_challenge": challenge,
-                "code_challenge_method": "S256",
-                "state": secrets.token_urlsafe(12),
-                "resource": self.inst.resource_url,
-                "ui_locales": "nl",
-            },
-        )
-        antwoord = browser.post(
-            _formulier(antwoord.text, str(antwoord.url)),
-            data={"username": self.gebruiker, "password": self.wachtwoord},
-        )
-        antwoord = self._naar_callback(browser, antwoord)
-        scherm = ""
-        if antwoord.status_code == 200:
-            scherm = zichtbare_tekst(antwoord.text)
-            verborgen = dict(VERBORGEN.findall(antwoord.text))
-            antwoord = browser.post(
-                _formulier(antwoord.text, str(antwoord.url)), data={**verborgen, "accept": "Ja"}
+        state = secrets.token_urlsafe(16)
+        with self._browser() as browser:
+            antwoord = browser.get(
+                f"{self.inst.oidc}/auth",
+                params={
+                    "client_id": self.inst.werkplek_id,
+                    "response_type": "code",
+                    "redirect_uri": self.inst.redirect_uri,
+                    "scope": scope,
+                    "code_challenge": challenge,
+                    "code_challenge_method": "S256",
+                    "state": state,
+                    "resource": self.inst.resource_url,
+                    "ui_locales": "nl",
+                },
             )
-        code = parse_qs(urlparse(antwoord.headers.get("location", "")).query).get("code", [None])[0]
-        if code is None:
-            raise WerkplekFout(f"geen autorisatiecode ontvangen (HTTP {antwoord.status_code})")
+            antwoord = browser.post(
+                _formulier(antwoord.text, str(antwoord.url)),
+                data={"username": self.gebruiker, "password": self.wachtwoord},
+            )
+            antwoord = self._naar_callback(browser, antwoord)
+            scherm = ""
+            if antwoord.status_code == 200:
+                scherm = zichtbare_tekst(antwoord.text)
+                verborgen = dict(VERBORGEN.findall(antwoord.text))
+                antwoord = browser.post(
+                    _formulier(antwoord.text, str(antwoord.url)),
+                    data={**verborgen, "accept": "Ja"},
+                )
+                antwoord = self._naar_callback(browser, antwoord)
+        code = self.autorisatiecode(antwoord, state)
         tokens = self._token(
             {
                 "grant_type": "authorization_code",

@@ -15,13 +15,21 @@ variable "locatie" {
 }
 
 variable "sponsor_object_id" {
-  description = "Object-id van de sponsor: de mens of groep die verantwoordelijk is voor de agent."
+  description = "Object-id van de sponsor: de gebruiker die verantwoordelijk is voor de agent."
   type        = string
+  validation {
+    condition     = can(regex("^[0-9a-fA-F-]{36}$", var.sponsor_object_id))
+    error_message = "sponsor_object_id moet de object-id (GUID) van een gebruiker zijn."
+  }
 }
 
 variable "eigenaar_object_id" {
-  description = "Object-id van de eigenaar die de blueprint mag beheren."
+  description = "Object-id van de gebruiker die eigenaar wordt en de blueprint mag beheren."
   type        = string
+  validation {
+    condition     = can(regex("^[0-9a-fA-F-]{36}$", var.eigenaar_object_id))
+    error_message = "eigenaar_object_id moet de object-id (GUID) van een gebruiker zijn."
+  }
 }
 
 variable "naam" {

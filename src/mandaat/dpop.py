@@ -11,6 +11,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import re
 import time
 import uuid
 from dataclasses import dataclass
@@ -23,6 +24,8 @@ from jwt.algorithms import ECAlgorithm
 
 TOEGESTANE_ALGORITMEN = ("ES256",)
 BEWIJS_GELDIGHEID_S = 60
+# Een P-256-coördinaat is precies 32 bytes: 43 tekens base64url zonder padding (RFC 7518 §6.2.1.2).
+P256_COORDINAAT = re.compile(r"[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]")
 
 
 class DPoPFout(Exception):
@@ -120,20 +123,32 @@ def _kop(bewijs: str) -> dict[str, Any]:
     if kop.get("alg") not in TOEGESTANE_ALGORITMEN:
         raise DPoPFout(f"DPoP-algoritme {kop.get('alg')!r} niet toegestaan")
     jwk = kop.get("jwk")
-    if not isinstance(jwk, dict) or jwk.get("kty") != "EC" or "d" in jwk:
-        raise DPoPFout("DPoP-bewijs mist een publieke EC-sleutel in de kop")
+    if not isinstance(jwk, dict) or jwk.get("kty") != "EC" or jwk.get("crv") != "P-256":
+        raise DPoPFout("DPoP-bewijs mist een publieke P-256-sleutel in de kop")
+    if "d" in jwk:
+        raise DPoPFout("DPoP-kop bevat een privésleutel")
+    for veld in ("x", "y"):
+        waarde = jwk.get(veld)
+        if not isinstance(waarde, str) or not P256_COORDINAAT.fullmatch(waarde):
+            raise DPoPFout(f"DPoP-sleutel heeft geen geldige {veld}-coördinaat voor P-256")
     return kop
 
 
 def _controleer_claims(claims: dict[str, Any], htm: str, htu: str, access_token: str) -> None:
     if claims.get("htm") != htm.upper():
         raise DPoPFout("htm komt niet overeen met de HTTP-methode")
-    if normaliseer_htu(str(claims.get("htu", ""))) != normaliseer_htu(htu):
+    try:
+        gelijk = normaliseer_htu(str(claims.get("htu", ""))) == normaliseer_htu(htu)
+    except ValueError as fout:
+        raise DPoPFout(f"htu is geen geldige URL: {fout}") from fout
+    if not gelijk:
         raise DPoPFout("htu komt niet overeen met de URL van het verzoek")
     if claims.get("ath") != token_hash(access_token):
         raise DPoPFout("ath komt niet overeen met het access token")
     iat = claims.get("iat")
-    if not isinstance(iat, int) or abs(time.time() - iat) > BEWIJS_GELDIGHEID_S:
+    nu = time.time()
+    # Vergelijken in plaats van aftrekken: `nu - iat` loopt over bij een iat als 10**400.
+    if type(iat) is not int or not nu - BEWIJS_GELDIGHEID_S <= iat <= nu + BEWIJS_GELDIGHEID_S:
         raise DPoPFout("DPoP-bewijs is verlopen of komt uit de toekomst")
     if not isinstance(claims.get("jti"), str) or not claims["jti"]:
         raise DPoPFout("DPoP-bewijs mist jti")
@@ -169,7 +184,7 @@ def valideer_bewijs(
         claims = jwt.decode(
             bewijs, sleutel, algorithms=list(TOEGESTANE_ALGORITMEN), options={"verify_iat": False}
         )
-    except (jwt.PyJWTError, ValueError) as fout:
+    except (jwt.PyJWTError, ValueError, TypeError) as fout:
         raise DPoPFout(f"handtekening DPoP-bewijs ongeldig: {fout}") from fout
     _controleer_claims(claims, htm, htu, access_token)
     werkelijk = thumbprint(jwk)

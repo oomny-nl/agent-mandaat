@@ -13,8 +13,8 @@ from cryptography.hazmat.primitives.asymmetric import ec
 
 from mandaat.agent.makelaar import ASSERTION_TYPE, Makelaar, MandaatGeweigerd
 from mandaat.config import Instellingen
-from mandaat.geheimen import AGENT_KID
-from mandaat.werkplek.sessie import WerkplekFout
+from mandaat.geheimen import AGENT_KID, Geheimen
+from mandaat.werkplek.sessie import Werkplek, WerkplekFout
 
 pytestmark = pytest.mark.integratie
 
@@ -161,3 +161,67 @@ def test_may_act_executor_weigert_ongeconsenteerde_may_act(
             verleen()
     finally:
         admin.delete(f"{pad}/{werkplek['id']}/protocol-mappers/models/{mapper_id}")
+        # De login zelf slaagde; zonder refresh token kan de werkplek die sessie niet uitloggen.
+        # Een achtergebleven werkpleksessie blokkeert elke volgende mandaatregistratie van Sanne.
+        sanne = admin.get(f"/{inst.realm}/users", params={"username": "sanne", "exact": "true"})
+        admin.post(f"/{inst.realm}/users/{sanne.json()[0]['id']}/logout").raise_for_status()
+
+
+def test_exchange_zonder_scope(verleen: Any, makelaar: Makelaar, inst: Instellingen) -> None:
+    """Proef 2: zonder `scope` een kort gedelegeerd token, maar nooit een token voor de API.
+
+    De audience-mapper zit alleen aan de toolscopes: zonder toolscope is de API geen audience.
+    """
+    verzoek = {
+        "grant_type": "urn:ietf:params:oauth:grant-type:token-exchange",
+        "subject_token": verleen().subject_token,
+        "subject_token_type": "urn:ietf:params:oauth:token-type:access_token",
+        "actor_token": makelaar.actortoken(),
+        "actor_token_type": "urn:ietf:params:oauth:token-type:access_token",
+    }
+    antwoord = makelaar._post(verzoek)
+    claims = lees(antwoord["access_token"])
+    assert "refresh_token" not in antwoord
+    assert claims["act"]["client_id"] == "dossierassistent"
+    assert claims["exp"] - claims["iat"] == 60
+    assert "sid" not in claims
+    assert claims["jti"].startswith("trrtte:")
+    assert inst.resource_url not in str(claims.get("aud"))
+    with pytest.raises(MandaatGeweigerd, match="audience not available"):
+        makelaar._post({**verzoek, "audience": makelaar.meta.resource})
+
+
+def test_vreemde_resource_parameter_wordt_genegeerd(
+    verleen: Any, makelaar: Makelaar, inst: Instellingen
+) -> None:
+    """Proef 17: Keycloak negeert `resource`; de binding aan de API komt uit `aud`.
+
+    Een `audience` die geen client in de realm is, weigert Keycloak wel.
+    """
+    verzoek = {
+        "grant_type": "urn:ietf:params:oauth:grant-type:token-exchange",
+        "subject_token": verleen().subject_token,
+        "subject_token_type": "urn:ietf:params:oauth:token-type:access_token",
+        "actor_token": makelaar.actortoken(),
+        "actor_token_type": "urn:ietf:params:oauth:token-type:access_token",
+        "scope": "dossier:lezen",
+        "audience": makelaar.meta.resource,
+        "resource": "http://elders.example/mcp",
+    }
+    antwoord = makelaar._post(verzoek)
+    assert lees(antwoord["access_token"])["aud"] == inst.resource_url
+    with pytest.raises(MandaatGeweigerd, match="Audience not found"):
+        makelaar._post({**verzoek, "audience": "http://elders.example/mcp"})
+
+
+def test_ongeldige_taakwaarde_geweigerd(
+    admin: httpx2.Client, inst: Instellingen, geheimen: Geheimen
+) -> None:
+    """Proef 6: een taak die niet aan het patroon voldoet, levert geen login op."""
+    werkplek = Werkplek(inst, "sanne", geheimen.wachtwoord("sanne"))
+    try:
+        with pytest.raises(WerkplekFout):
+            werkplek.login("geen-dossier")
+    finally:
+        sanne = admin.get(f"/{inst.realm}/users", params={"username": "sanne", "exact": "true"})
+        admin.post(f"/{inst.realm}/users/{sanne.json()[0]['id']}/logout").raise_for_status()

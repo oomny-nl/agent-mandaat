@@ -38,7 +38,7 @@ jobs:
         run: docker compose up -d --build --wait
       - name: Integratietests
         run: docker compose run --rm tests
-      - name: Demo (alle drie de scenario's)
+      - name: Demo (drie scenario's en de bewijstabel)
         run: docker compose run --rm demo
       - name: Logs bij falen
         if: failure()
@@ -70,6 +70,7 @@ jobs:
         with:
           fetch-depth: 0
       - name: gitleaks
-        run: |
-          docker run --rm -v "$PWD:/repo" ghcr.io/gitleaks/gitleaks:v8.30.1 \
-            git /repo --redact --verbose
+        env:
+          # v8.30.1, op digest gepind (multi-arch index)
+          GITLEAKS: ghcr.io/gitleaks/gitleaks@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f
+        run: docker run --rm -v "$PWD:/repo" "$GITLEAKS" git /repo --redact --verbose
