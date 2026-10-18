@@ -11,9 +11,16 @@ import httpx2
 import jwt
 import pytest
 from cryptography.hazmat.primitives.asymmetric import rsa
+from starlette.applications import Starlette
+from starlette.requests import Request
+from starlette.responses import JSONResponse
+from starlette.routing import Route
+from starlette.testclient import TestClient
 
 from mandaat.config import Instellingen
-from mandaat.dpop import DPoPSleutel
+from mandaat.dpop import DPoPSleutel, token_hash
+from mandaat.server.opslag import Opslag
+from mandaat.server.poort import Agentpoort
 from mandaat.server.tokens import Tokencontrole, TokenFout
 
 INST = Instellingen(
@@ -39,6 +46,10 @@ class _Antwoord:
 
     def json(self) -> Any:
         return self._inhoud
+
+    def raise_for_status(self) -> None:
+        if self.status_code >= 400:
+            raise httpx2.HTTPError(f"status {self.status_code}")
 
 
 @pytest.fixture
@@ -185,3 +196,118 @@ def test_ongeldig_medewerkertoken(
     with pytest.raises(TokenFout, match=melding) as fout:
         controle.medewerkertoken(f"Bearer {_medewerker(**anders)}", "mandaat:beheren")
     assert fout.value.status == status
+
+
+def _met_sessies(monkeypatch: pytest.MonkeyPatch, inhoud: Any, status: int = 200) -> None:
+    monkeypatch.setattr(httpx2, "post", lambda *a, **k: _Antwoord(200, {"access_token": "t"}))
+    monkeypatch.setattr(httpx2, "get", lambda *a, **k: _Antwoord(status, inhoud))
+
+
+def test_actieve_sessies(controle: Tokencontrole, monkeypatch: pytest.MonkeyPatch) -> None:
+    inhoud = [
+        {"id": "s1", "clients": {"uuid-1": "werkplek", "uuid-2": "account-console"}},
+        {"id": "s2", "clients": {}},
+    ]
+    _met_sessies(monkeypatch, inhoud)
+    assert controle.actieve_sessies("sub-sanne") == {
+        "s1": frozenset({"werkplek", "account-console"}),
+        "s2": frozenset(),
+    }
+
+
+@pytest.mark.parametrize(
+    ("inhoud", "status"),
+    [
+        ({"id": "s1"}, 200),
+        ([["s1"]], 200),
+        ([{"clients": {}}], 200),
+        ([{"id": "", "clients": {}}], 200),
+        ([{"id": 1, "clients": {}}], 200),
+        ([{"id": "s1"}], 200),
+        ([{"id": "s1", "clients": ["werkplek"]}], 200),
+        ([{"id": "s1", "clients": {"uuid": 1}}], 200),
+        ([], 403),
+    ],
+)
+def test_afwijkende_sessielijst_faalt_dicht(
+    controle: Tokencontrole, monkeypatch: pytest.MonkeyPatch, inhoud: Any, status: int
+) -> None:
+    _met_sessies(monkeypatch, inhoud, status)
+    with pytest.raises(TokenFout, match="sessies niet op te vragen") as fout:
+        controle.actieve_sessies("sub-sanne")
+    assert fout.value.status == 503
+
+
+def _poort(tmp_path: Path, controle: Tokencontrole) -> tuple[TestClient, Opslag]:
+    """De echte Agentpoort met de echte tokencontrole voor één MCP-route."""
+
+    async def mcp(_request: Request) -> JSONResponse:
+        return JSONResponse({"doorgelaten": True})
+
+    binnen = Starlette(routes=[Route("/mcp", mcp, methods=["POST"])])
+    opslag = Opslag(tmp_path / "db", 2)
+    meta = "http://dossier-mcp:8000/.well-known/oauth-protected-resource/mcp"
+    poort = Agentpoort(binnen, lambda: controle, lambda: opslag, {}, meta)
+    return TestClient(poort, base_url="http://dossier-mcp:8000"), opslag
+
+
+def _bewijs_met_jwk(t: str, **jwk: Any) -> str:
+    claims = {
+        "htm": "POST",
+        "htu": INST.resource_url,
+        "iat": int(time.time()),
+        "jti": str(uuid.uuid4()),
+        "ath": token_hash(t),
+    }
+    kop = {"typ": "dpop+jwt", "jwk": {**DPOP.publieke_jwk, **jwk}}
+    return jwt.encode(claims, DPOP.sleutel_priv, algorithm="ES256", headers=kop)
+
+
+def _mcp(client: TestClient, t: str, bewijs: str) -> httpx2.Response:
+    koppen = {"authorization": f"DPoP {t}", "dpop": bewijs}
+    return client.post("/mcp", json={"jsonrpc": "2.0", "id": 1, "method": "ping"}, headers=koppen)
+
+
+def test_geldige_aanroep_door_de_echte_poort(controle: Tokencontrole, tmp_path: Path) -> None:
+    client, _ = _poort(tmp_path, controle)
+    t = token()
+    assert _mcp(client, t, _bewijs_met_jwk(t)).status_code == 200
+
+
+GOEDE_X = DPOP.publieke_jwk["x"]
+
+
+@pytest.mark.parametrize("x", [None, [], {}, 123, "", "a" * 43, GOEDE_X[:-1], GOEDE_X + "A"])
+def test_misvormde_dpop_sleutel_geeft_geweigerde_aanroep_met_audit(
+    controle: Tokencontrole, tmp_path: Path, x: Any
+) -> None:
+    client, opslag = _poort(tmp_path, controle)
+    t = token()
+    antwoord = _mcp(client, t, _bewijs_met_jwk(t, x=x))
+    assert antwoord.status_code == 401, antwoord.text
+    assert 'error="invalid_dpop_proof"' in antwoord.headers["www-authenticate"]
+    record = opslag.auditlog()[-1]
+    assert (record["beslissing"], record["laag"]) == ("geweigerd", "api-poort")
+    assert record["medewerker"] == "sub-sanne"
+
+
+@pytest.mark.parametrize(
+    ("anders", "medewerker"),
+    [
+        ({"iat": str(int(time.time()))}, "sub-sanne"),
+        ({"exp": str(int(time.time()) + 60)}, "sub-sanne"),
+        ({"iat": True}, "sub-sanne"),
+        ({"sub": ["sub-sanne"]}, None),
+        ({"jti": 7}, None),
+    ],
+)
+def test_claim_van_verkeerd_type_geeft_geweigerde_aanroep_met_audit(
+    controle: Tokencontrole, tmp_path: Path, anders: dict[str, Any], medewerker: str | None
+) -> None:
+    client, opslag = _poort(tmp_path, controle)
+    t = token(**anders)
+    antwoord = _mcp(client, t, _bewijs_met_jwk(t))
+    assert antwoord.status_code == 401, antwoord.text
+    assert antwoord.json()["error_description"].startswith("token ongeldig")
+    record = opslag.auditlog()[-1]
+    assert (record["beslissing"], record["medewerker"]) == ("geweigerd", medewerker)

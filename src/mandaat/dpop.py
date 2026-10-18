@@ -11,6 +11,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import re
 import time
 import uuid
 from dataclasses import dataclass
@@ -23,6 +24,8 @@ from jwt.algorithms import ECAlgorithm
 
 TOEGESTANE_ALGORITMEN = ("ES256",)
 BEWIJS_GELDIGHEID_S = 60
+# Een P-256-coördinaat is precies 32 bytes: 43 tekens base64url zonder padding (RFC 7518 §6.2.1.2).
+P256_COORDINAAT = re.compile(r"[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]")
 
 
 class DPoPFout(Exception):
@@ -124,6 +127,10 @@ def _kop(bewijs: str) -> dict[str, Any]:
         raise DPoPFout("DPoP-bewijs mist een publieke P-256-sleutel in de kop")
     if "d" in jwk:
         raise DPoPFout("DPoP-kop bevat een privésleutel")
+    for veld in ("x", "y"):
+        waarde = jwk.get(veld)
+        if not isinstance(waarde, str) or not P256_COORDINAAT.fullmatch(waarde):
+            raise DPoPFout(f"DPoP-sleutel heeft geen geldige {veld}-coördinaat voor P-256")
     return kop
 
 
@@ -139,7 +146,7 @@ def _controleer_claims(claims: dict[str, Any], htm: str, htu: str, access_token:
     if claims.get("ath") != token_hash(access_token):
         raise DPoPFout("ath komt niet overeen met het access token")
     iat = claims.get("iat")
-    if not isinstance(iat, int) or abs(time.time() - iat) > BEWIJS_GELDIGHEID_S:
+    if type(iat) is not int or abs(time.time() - iat) > BEWIJS_GELDIGHEID_S:
         raise DPoPFout("DPoP-bewijs is verlopen of komt uit de toekomst")
     if not isinstance(claims.get("jti"), str) or not claims["jti"]:
         raise DPoPFout("DPoP-bewijs mist jti")
@@ -175,7 +182,7 @@ def valideer_bewijs(
         claims = jwt.decode(
             bewijs, sleutel, algorithms=list(TOEGESTANE_ALGORITMEN), options={"verify_iat": False}
         )
-    except (jwt.PyJWTError, ValueError) as fout:
+    except (jwt.PyJWTError, ValueError, TypeError) as fout:
         raise DPoPFout(f"handtekening DPoP-bewijs ongeldig: {fout}") from fout
     _controleer_claims(claims, htm, htu, access_token)
     werkelijk = thumbprint(jwk)

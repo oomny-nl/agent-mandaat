@@ -144,20 +144,43 @@ class _Registratie(_Controle):
 
 
 @pytest.mark.parametrize(
-    ("sessies", "status"),
+    ("sessies", "status", "melding"),
     [
-        ({"eigen": frozenset({"werkplek"})}, 201),
-        ({"eigen": frozenset({"werkplek"}), "elders": frozenset({"account-console"})}, 201),
-        ({"eigen": frozenset({"werkplek"}), "parallel": frozenset({"werkplek"})}, 409),
+        ({"eigen": frozenset({"werkplek"})}, 201, ""),
+        ({"eigen": frozenset({"werkplek"}), "elders": frozenset({"account-console"})}, 201, ""),
+        ({"eigen": frozenset({"werkplek"}), "parallel": frozenset({"werkplek"})}, 409, "andere"),
+        ({}, 409, "eigen werkpleksessie"),
+        ({"elders": frozenset({"account-console"})}, 409, "eigen werkpleksessie"),
+        ({"eigen": frozenset({"account-console"})}, 409, "eigen werkpleksessie"),
     ],
 )
-def test_registratie_alleen_zonder_andere_werkpleksessie(
-    dienst: Dienst, sessies: dict[str, frozenset[str]], status: int
+def test_registratie_alleen_vanuit_de_eigen_en_enige_werkpleksessie(
+    dienst: Dienst, sessies: dict[str, frozenset[str]], status: int, melding: str
 ) -> None:
     dienst._controle = cast(Any, _Registratie(sessies))
     with TestClient(maak_app(dienst), base_url=BASIS) as c:
         antwoord = c.post("/mandaten")
     assert antwoord.status_code == status, antwoord.text
     if status == 409:
-        assert "andere werkpleksessie" in antwoord.json()["error"]
-        assert dienst.opslag.auditlog()[-1]["beslissing"] == "geweigerd"
+        assert melding in antwoord.json()["error"]
+        record = dienst.opslag.auditlog()[-1]
+        assert record["beslissing"] == "geweigerd"
+        assert melding in record["reden"]
+
+
+@pytest.mark.parametrize(
+    "anders", [{"taak": ["2026-0142"]}, {"sid": 1}, {"preferred_username": ""}]
+)
+def test_registratie_met_claim_van_verkeerd_type_geeft_400_met_audit(
+    dienst: Dienst, anders: dict[str, Any]
+) -> None:
+    class _Afwijkend(_Registratie):
+        def medewerkertoken(self, *_a: Any) -> Gecontroleerd:
+            return Gecontroleerd({**super().medewerkertoken().claims, **anders})
+
+    dienst._controle = cast(Any, _Afwijkend({"eigen": frozenset({"werkplek"})}))
+    with TestClient(maak_app(dienst), base_url=BASIS) as c:
+        antwoord = c.post("/mandaten")
+    assert antwoord.status_code == 400, antwoord.text
+    assert dienst.opslag.mandaten() == []
+    assert dienst.opslag.auditlog()[-1]["beslissing"] == "geweigerd"

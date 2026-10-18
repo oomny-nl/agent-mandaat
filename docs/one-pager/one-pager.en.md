@@ -15,8 +15,8 @@ Michael Owen Meijer, Oomny B.V. · identity architect and AI engineer for govern
 
 AI agents are getting access to case files, mailboxes and line-of-business systems. Often with
 the user's own token, a shared API secret or a broadly privileged service account. A manipulated
-agent can then do whatever that identity can, and the logs of that system cannot tell whether the
-human or the agent acted.
+agent can then do whatever that identity can. When human and agent share one identity, that
+identity alone cannot tell you who acted.
 
 ## The approach
 

@@ -12,8 +12,10 @@ Een auditrecord wordt in één `BEGIN IMMEDIATE`-transactie aan de keten gehange
 en record toevoegen), ook vanuit een tweede verbinding of proces. Registratie en intrekking van een
 mandaat, een notitie en een besluit schrijven hun auditrecord in dezelfde transactie als de
 wijziging: er is geen wijziging zonder record en geen `toegestaan` zonder wijziging. Het anker
-volgt na de commit; faalt dat schrijven, dan eindigen log en anker niet meer op hetzelfde record
-en keurt de controle het log af.
+volgt na de commit; faalt dat schrijven, dan is het laatste record niet verankerd en keurt de
+controle het log af. Schrijven twee verbindingen tegelijk, dan kan de volgorde van de ankerregels
+afwijken van die van de records (eerst 2, dan 1); de controle gebruikt daarom het hoogste verankerde
+nummer, niet de laatste regel.
 """
 
 from __future__ import annotations
@@ -108,15 +110,24 @@ class Opslag:
 
     @contextmanager
     def _transactie(self) -> Generator[None]:
-        """Schrijftransactie onder het slot; bij een uitzondering wordt alles teruggedraaid."""
+        """Schrijftransactie onder het slot; bij een uitzondering wordt alles teruggedraaid.
+
+        Ook een mislukte COMMIT (bijvoorbeeld `database is locked`) draait terug: SQLite laat de
+        transactie dan open, en zonder ROLLBACK zou elk volgend verzoek op deze verbinding falen.
+        De oorspronkelijke fout gaat door naar de aanroeper.
+        """
         with self._slot:
             self._db.execute("BEGIN IMMEDIATE")
             try:
                 yield
-            except BaseException:
-                self._db.execute("ROLLBACK")
+                self._db.execute("COMMIT")
+            except BaseException as fout:
+                if self._db.in_transaction:
+                    try:
+                        self._db.execute("ROLLBACK")
+                    except sqlite3.Error as terugdraaien:
+                        fout.add_note(f"ROLLBACK na deze fout mislukte ook: {terugdraaien}")
                 raise
-            self._db.execute("COMMIT")
 
     # Mandaten ---------------------------------------------------------------------------------
 
@@ -443,7 +454,7 @@ def _vergelijk_anker(
             return False, f"record {nr} staat in het anker maar ontbreekt in het log"
         if hashes[nr] != h:
             return False, f"record {nr} wijkt af van het anker"
-    if anker and records and records[-1]["nr"] != anker[-1][0]:
+    if anker and records and records[-1]["nr"] != max(nr for nr, _ in anker):
         return False, "log en anker eindigen niet op hetzelfde record"
     return True, "intact"
 

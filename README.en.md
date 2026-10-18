@@ -207,7 +207,8 @@ responses and `terraform validate`, not against a real tenant.
   whether it is right.
 - Revocation takes effect at the next action. An action already admitted completes; a note that
   was written stays.
-- A sign-in in a second session that happens only after registration cannot be told apart from
+- A sign-in in a second session that happens only after the session check at registration (that
+  check is a snapshot of Keycloak) cannot be told apart from
   the mandate's session: the delegated token carries no session id. Such a token still falls under
   the active mandate (same caseworker, same case). The workplace app is therefore a trusted
   component: it only passes on the subject token of the session that registered the mandate.
@@ -236,7 +237,7 @@ responses and `terraform validate`, not against a real tenant.
 | `src/mandaat/werkplek/` | Caseworker's workplace app: sign-in with PKCE and consent, mandate management |
 | `src/mandaat/bootstrap/` | Realm setup through the Admin REST API |
 | `entra/` | Terraform and token provider for Entra Agent ID |
-| `tests/` | 162 unit tests, 55 integration tests against the real stack |
+| `tests/` | 194 unit tests, 55 integration tests against the real stack |
 | `docs/` | Design, threat model, one-pager |
 
 Quality gates: `ruff`, `ty`, `pytest`, gitleaks and `terraform validate` in CI. Versions are pinned

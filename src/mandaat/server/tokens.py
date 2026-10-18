@@ -60,6 +60,43 @@ class Gecontroleerd:
         return frozenset(str(self.claims.get("scope", "")).split())
 
 
+def _sessies_uit(lijst: Any) -> dict[str, frozenset[str]]:
+    """Sessie-id's met hun clientId's uit het antwoord van `/users/{id}/sessions`.
+
+    Raises:
+        ValueError: Bij elke afwijking van de verwachte vorm; dan geen nieuw mandaat.
+    """
+    if not isinstance(lijst, list):
+        raise ValueError("sessielijst is geen JSON-array")
+    sessies: dict[str, frozenset[str]] = {}
+    for sessie in lijst:
+        if not isinstance(sessie, dict):
+            raise ValueError("sessie is geen JSON-object")
+        sid, clients = sessie.get("id"), sessie.get("clients")
+        if not isinstance(sid, str) or not sid:
+            raise ValueError("sessie zonder geldig id")
+        if not isinstance(clients, dict) or not all(isinstance(c, str) for c in clients.values()):
+            raise ValueError(f"sessie {sid} zonder geldige clients")
+        sessies[sid] = frozenset(clients.values())
+    return sessies
+
+
+def _controleer_claimtypen(claims: dict[str, Any]) -> None:
+    """Weiger claims met een verkeerd JSON-type; PyJWT accepteert bijvoorbeeld `iat` als tekst.
+
+    Raises:
+        TokenFout: Als `sub`, `jti` of `iss` geen niet-lege tekst is (dan zonder claims, want de
+            audit kan ze niet vastleggen) of een tijdclaim geen getal (RFC 7519 §2, NumericDate).
+    """
+    for naam in ("sub", "jti", "iss"):
+        if not isinstance(claims.get(naam), str) or not claims[naam]:
+            raise TokenFout(f"token ongeldig: {naam} is geen tekst")
+    for naam in ("exp", "iat", "nbf"):
+        waarde = claims.get(naam, 0)
+        if isinstance(waarde, bool) or not isinstance(waarde, int | float):
+            raise TokenFout(f"token ongeldig: {naam} is geen getal", claims=claims)
+
+
 class Tokencontrole:
     """Controleert tokens tegen de Keycloak-realm.
 
@@ -76,7 +113,7 @@ class Tokencontrole:
     def _decodeer(self, token: str) -> dict[str, Any]:
         try:
             sleutel = self._jwks.get_signing_key_from_jwt(token)
-            return jwt.decode(
+            claims = jwt.decode(
                 token,
                 sleutel.key,
                 algorithms=["RS256", "ES256"],
@@ -89,6 +126,8 @@ class Tokencontrole:
             raise TokenFout(f"sleutels van Keycloak niet op te halen: {fout}") from fout
         except jwt.PyJWTError as fout:
             raise TokenFout(f"token ongeldig: {fout}") from fout
+        _controleer_claimtypen(claims)
+        return claims
 
     def _actief(self, token: str) -> None:
         try:
@@ -136,10 +175,7 @@ class Tokencontrole:
                 timeout=10,
             )
             sessies.raise_for_status()
-            return {
-                str(s["id"]): frozenset(str(c) for c in (s.get("clients") or {}).values())
-                for s in sessies.json()
-            }
+            return _sessies_uit(sessies.json())
         except (httpx2.HTTPError, KeyError, TypeError, ValueError) as fout:
             raise TokenFout(
                 f"sessies niet op te vragen, daarom geweigerd: {fout}", status=503

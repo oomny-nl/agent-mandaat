@@ -205,7 +205,8 @@ Entra-antwoorden en `terraform validate`, niet tegen een echte tenant.
   het klopt.
 - Intrekken werkt bij de volgende actie. Een actie die al is toegelaten, voltooit; een geschreven
   notitie blijft staan.
-- Een login die pas ná de registratie in een tweede sessie gebeurt, kan de API niet onderscheiden
+- Een login die pas ná de sessiecontrole bij de registratie in een tweede sessie gebeurt (die
+  controle is een momentopname van Keycloak), kan de API niet onderscheiden
   van de sessie van het mandaat: het gedelegeerde token draagt geen sessie-id. Zo'n token valt nog
   steeds onder het actieve mandaat (zelfde medewerker, zelfde dossier). De werkplek is daarom een
   vertrouwde component: zij geeft alleen het subject token door van de sessie die het mandaat
@@ -234,7 +235,7 @@ Entra-antwoorden en `terraform validate`, niet tegen een echte tenant.
 | `src/mandaat/werkplek/` | Werkplek van de medewerker: login met PKCE en consent, mandaatbeheer |
 | `src/mandaat/bootstrap/` | Inrichting van de realm via de Admin REST API |
 | `entra/` | Terraform en tokenprovider voor Entra Agent ID |
-| `tests/` | 162 unittests, 55 integratietests tegen de echte keten |
+| `tests/` | 194 unittests, 55 integratietests tegen de echte keten |
 | `docs/` | Ontwerp, dreigingsmodel, one-pager |
 
 Kwaliteit: `ruff`, `ty`, `pytest`, gitleaks en `terraform validate` in CI. Versies zijn exact

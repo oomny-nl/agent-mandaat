@@ -321,9 +321,14 @@ def _sessies_beeindigd(dienst: Dienst, sub: str, sid: str) -> tuple[set[str] | N
     """Sessies van eerdere mandaten als alleen de eigen werkpleksessie nog actief is.
 
     Het gedelegeerde token van Keycloak draagt geen `sid`: de API kan niet zien uit welke sessie het
-    subject token kwam. Daarom moet bij registratie elke andere werkpleksessie van de medewerker
-    beëindigd zijn, met of zonder eerder mandaat. Anders kan haar subject token tokens opleveren
-    die onder dit nieuwe mandaat vallen.
+    subject token kwam. Daarom moet bij registratie de eigen sessie (`sid` uit het medewerkertoken)
+    actief zijn als werkpleksessie, en elke andere werkpleksessie van de medewerker beëindigd, met
+    of zonder eerder mandaat. Anders kan haar subject token tokens opleveren die onder dit nieuwe
+    mandaat vallen.
+
+    Dit is een momentopname van Keycloak. `HistorieGewijzigd` bewaakt daarna alleen de
+    mandaathistorie in de database; een login in de milliseconden tussen deze controle en de
+    registratie ziet de API niet.
 
     Returns:
         (eerdere sessies, "", 0), of (None, reden, status) als registratie niet mag.
@@ -333,6 +338,8 @@ def _sessies_beeindigd(dienst: Dienst, sub: str, sid: str) -> tuple[set[str] | N
         actief = dienst.controle.actieve_sessies(sub)
     except TokenFout as fout:
         return None, fout.reden, fout.status
+    if dienst.inst.werkplek_id not in actief.get(sid, frozenset()):
+        return None, "de eigen werkpleksessie is niet actief; log opnieuw in", 409
     if eerder & actief.keys():
         return None, "de sessie van een eerder mandaat is nog actief; log die eerst uit", 409
     if any(s != sid and dienst.inst.werkplek_id in c for s, c in actief.items()):
@@ -340,8 +347,14 @@ def _sessies_beeindigd(dienst: Dienst, sub: str, sid: str) -> tuple[set[str] | N
     return eerder, "", 0
 
 
+def _tekstclaim(claims: dict[str, Any], naam: str) -> str:
+    """De claim als hij tekst is, anders een lege tekst."""
+    waarde = claims.get(naam)
+    return waarde if isinstance(waarde, str) else ""
+
+
 def _verleen(dienst: Dienst, claims: dict[str, Any]) -> Response:
-    gebruiker, taak, sid = claims.get("preferred_username"), claims.get("taak"), claims.get("sid")
+    gebruiker, taak, sid = (_tekstclaim(claims, n) for n in ("preferred_username", "taak", "sid"))
     handeling = "mandaat verlenen"
     if not (gebruiker and taak and sid):
         return _weiger_beheer(

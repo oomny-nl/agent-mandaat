@@ -2,8 +2,9 @@
 
 Elk verzoek naar `/mcp` (ook `initialize` en `tools/list`) vraagt een geldig, actief,
 DPoP-gebonden token van een toegelaten agent. Bij `tools/call` controleert de poort ook of het token
-de scope van die tool heeft (`403 insufficient_scope`). De mandaatcontrole en het eenmalig gebruik
-van het token gebeuren daarna in de tool zelf, in één transactie met de actie.
+de scope van die tool heeft (`403 insufficient_scope`). Daarna kent de tool zelf twee atomaire
+stappen: mandaatcontrole plus reservering van het token in één transactie, en vervolgens de
+wijziging plus haar auditrecord in één transactie.
 
 Het DPoP-bewijs wordt vergeleken met de URI van het ontvangen verzoek (schema, `Host` en pad), niet
 met een vaste URL. Een verzoek mag maar één `Authorization`- en één `DPoP`-header hebben.
