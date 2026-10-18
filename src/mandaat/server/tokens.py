@@ -21,7 +21,8 @@ from mandaat.config import Instellingen
 from mandaat.dpop import DPoPFout, GevalideerdBewijs, valideer_bewijs
 
 TOEGELATEN_AGENTS = frozenset({"dossierassistent"})
-# Grootste geheel getal dat exact in een JSON-double past (RFC 7159 §6).
+# Eigen defensieve grens voor exp, iat en nbf: extreme waarden weigeren vóór verdere verwerking.
+# Geen voorgeschreven NumericDate-bereik (RFC 7519 §2) en geen maximale SQLite-waarde.
 MAX_TIJDCLAIM = 2**53
 
 
@@ -88,8 +89,8 @@ def _controleer_claimtypen(claims: dict[str, Any]) -> None:
 
     Raises:
         TokenFout: Als `sub`, `jti` of `iss` geen niet-lege tekst is (dan zonder claims, want de
-            audit kan ze niet vastleggen) of een tijdclaim geen getal tussen 0 en 2**53 is
-            (RFC 7519 §2, NumericDate; daarbuiten past de waarde niet in SQLite of een double).
+            audit kan ze niet vastleggen) of een tijdclaim geen getal is (RFC 7519 §2,
+            NumericDate) of buiten de eigen grens 0..`MAX_TIJDCLAIM` valt.
     """
     for naam in ("sub", "jti", "iss"):
         if not isinstance(claims.get(naam), str) or not claims[naam]:
