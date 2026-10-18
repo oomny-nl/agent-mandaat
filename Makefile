@@ -6,7 +6,9 @@ COMPOSE := docker compose --progress quiet
 	cp .env.example .env
 
 ## demo: start de keten schoon en speel de scenario's af (één commando)
-demo: up speel
+# Eerst `up`, dan pas `speel`: ook met `make -j` start de demo niet tegen een halve keten
+demo: up
+	@$(MAKE) --no-print-directory speel
 
 ## up: start Keycloak, inrichting en dossier-API vanuit een schone toestand
 up: .env
@@ -41,6 +43,6 @@ down:
 ## opname: neem de demo op met VHS (demo/demo.tape)
 opname: .env
 	vhs demo/demo.tape
-	timeout 600 ffmpeg -nostdin -y -loglevel error -i docs/beeld/demo.mp4 \
+	ffmpeg -nostdin -y -loglevel error -i docs/beeld/demo.mp4 \
 		-vf "fps=6,scale=1000:-1:flags=lanczos,split[a][b];[a]palettegen=max_colors=24:stats_mode=diff[p];[b][p]paletteuse=dither=none:diff_mode=rectangle" \
 		docs/beeld/demo.gif
