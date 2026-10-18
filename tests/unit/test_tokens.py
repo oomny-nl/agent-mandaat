@@ -33,11 +33,11 @@ class _Sleutel:
 
 
 class _Antwoord:
-    def __init__(self, status: int, inhoud: dict[str, Any]) -> None:
+    def __init__(self, status: int, inhoud: Any) -> None:
         self.status_code = status
         self._inhoud = inhoud
 
-    def json(self) -> dict[str, Any]:
+    def json(self) -> Any:
         return self._inhoud
 
 
@@ -58,6 +58,7 @@ def token(**anders: Any) -> str:
         "iat": nu,
         "exp": nu + 60,
         "jti": f"trrtte:{uuid.uuid4()}",
+        "typ": "DPoP",
         "azp": "dossierassistent",
         "scope": "dossier:lezen",
         "act": {"sub": "sub-agent", "client_id": "dossierassistent"},
@@ -67,9 +68,14 @@ def token(**anders: Any) -> str:
     return jwt.encode({k: v for k, v in claims.items() if v is not None}, SLEUTEL, "RS256")
 
 
-def agent(controle: Tokencontrole, t: str, sleutel: DPoPSleutel = DPOP) -> dict[str, Any]:
+def agent(
+    controle: Tokencontrole,
+    t: str,
+    sleutel: DPoPSleutel = DPOP,
+    ontvangen: str = INST.resource_url,
+) -> dict[str, Any]:
     bewijs = sleutel.bewijs("POST", INST.resource_url, access_token=t)
-    return controle.agenttoken(f"DPoP {t}", bewijs, "POST").claims
+    return controle.agenttoken(f"DPoP {t}", bewijs, "POST", ontvangen).claims
 
 
 def test_geldig_agenttoken(controle: Tokencontrole) -> None:
@@ -85,7 +91,14 @@ def test_geldig_agenttoken(controle: Tokencontrole) -> None:
         ({"act": None}, "act"),
         ({"act": {"client_id": "onbekende-agent"}}, "act"),
         ({"cnf": None}, "DPoP-gebonden"),
+        ({"cnf": "geen-object"}, "DPoP-gebonden"),
+        ({"cnf": {"jkt": 42}}, "DPoP-gebonden"),
         ({"jti": None}, "jti"),
+        ({"typ": "Bearer"}, "tokentype"),
+        ({"typ": "ID"}, "tokentype"),
+        ({"typ": None}, "tokentype"),
+        ({"act": "dossierassistent"}, "act"),
+        ({"act": {"client_id": ["dossierassistent"]}}, "act"),
     ],
 )
 def test_ongeldig_agenttoken(controle: Tokencontrole, anders: dict[str, Any], melding: str) -> None:
@@ -95,7 +108,13 @@ def test_ongeldig_agenttoken(controle: Tokencontrole, anders: dict[str, Any], me
 
 def test_bearer_schema_voor_tools_geweigerd(controle: Tokencontrole) -> None:
     with pytest.raises(TokenFout, match="DPoP"):
-        controle.agenttoken(f"Bearer {token()}", None, "POST")
+        controle.agenttoken(f"Bearer {token()}", None, "POST", INST.resource_url)
+
+
+def test_bewijs_voor_andere_uri_dan_het_ontvangen_verzoek(controle: Tokencontrole) -> None:
+    with pytest.raises(TokenFout, match="htu") as fout:
+        agent(controle, token(), ontvangen="http://elders:8000/mcp")
+    assert fout.value.code == "invalid_dpop_proof"
 
 
 def test_gestolen_token_met_andere_sleutel(controle: Tokencontrole) -> None:
@@ -121,8 +140,26 @@ def test_introspectie_onbereikbaar_faalt_dicht(
         agent(controle, token())
 
 
+@pytest.mark.parametrize(
+    "antwoord",
+    [_Antwoord(500, {"active": True}), _Antwoord(200, {"active": "true"}), _Antwoord(200, [])],
+)
+def test_afwijkende_introspectie_faalt_dicht(
+    controle: Tokencontrole, monkeypatch: pytest.MonkeyPatch, antwoord: _Antwoord
+) -> None:
+    monkeypatch.setattr(httpx2, "post", lambda *a, **k: antwoord)
+    with pytest.raises(TokenFout, match="niet meer actief"):
+        agent(controle, token())
+
+
 def _medewerker(**anders: Any) -> str:
-    standaard = {"act": None, "cnf": None, "azp": "werkplek", "scope": "mandaat:beheren"}
+    standaard = {
+        "act": None,
+        "cnf": None,
+        "typ": "Bearer",
+        "azp": "werkplek",
+        "scope": "mandaat:beheren",
+    }
     return token(**{**standaard, **anders})
 
 
@@ -138,6 +175,8 @@ def test_medewerkertoken(controle: Tokencontrole) -> None:
         ({"may_act": {"client_id": "dossierassistent"}}, "niet voor een agent", 401),
         ({"azp": "dossierassistent"}, "werkplek", 401),
         ({"scope": "dossier:lezen"}, "mandaat:beheren", 403),
+        ({"typ": "ID"}, "tokentype", 401),
+        ({"typ": "DPoP"}, "tokentype", 401),
     ],
 )
 def test_ongeldig_medewerkertoken(

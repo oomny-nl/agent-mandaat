@@ -86,6 +86,13 @@ def verwacht(scenario: str, verwachtingen: list[tuple[str, str]]) -> None:
     GEBEURTENISSEN.clear()
 
 
+def _api_melding(soort: str, tekst: str) -> tuple[str, str]:
+    """Regel en stijl voor een weigering of fout van de dossier-API."""
+    if soort == "api_weigert":
+        return f"WEIGERT: {tekst.rsplit(': ', 1)[-1][:56]}", "bold red"
+    return f"FOUT (geen weigering): {tekst[:56]}", "bold yellow"
+
+
 def waarnemer(gebeurtenis: dict[str, Any]) -> None:
     """Vertel wat de agent doet en wat Keycloak en de API beslissen."""
     GEBEURTENISSEN.append(gebeurtenis)
@@ -106,8 +113,8 @@ def waarnemer(gebeurtenis: dict[str, Any]) -> None:
         fout = gebeurtenis["fout"]
         uitleg = next((v for k, v in KEYCLOAK_UITLEG.items() if fout.startswith(k)), fout[:40])
         zeg("Keycloak", f"WEIGERT token voor {gebeurtenis['scope']}: {uitleg}", "bold red")
-    elif soort == "api_weigert":
-        zeg("dossier-API", f"WEIGERT: {gebeurtenis['tekst'].rsplit(': ', 1)[-1][:56]}", "bold red")
+    elif soort in ("api_weigert", "api_fout"):
+        zeg("dossier-API", *_api_melding(soort, gebeurtenis["tekst"]))
     elif soort == "resultaat":
         tekst = gebeurtenis["tekst"]
         if tekst.startswith("{"):
@@ -273,7 +280,7 @@ async def scenario_ingetrokken(regie: Regie) -> None:
 
 
 async def scenario_noodstop(regie: Regie) -> None:
-    """Noodstop: de beheerder schakelt de agent uit; lopende tokens worden direct ongeldig."""
+    """Scenario 3, vervolg: de beheerder schakelt de agent uit; een klaarliggend token vervalt."""
     sanne = regie.werkplek()
     mandaat = regie.verleen(sanne, "2026-0142")
     admin = admin_client(regie.inst, "admin", os.environ["KC_BOOTSTRAP_ADMIN_PASSWORD"])
@@ -334,13 +341,14 @@ def bewijstabel(inst: Instellingen) -> None:
         tabel.add_row(*_rij(record), style="red" if record["beslissing"] == "geweigerd" else None)
     console.print(tabel)
     intact, reden = controleer_tegen_anker(records, lees_anker(inst.anker_pad))
+    if not intact:
+        console.print(f"[bold red]Auditketen {reden}[/bold red]: {len(records)} records")
+        raise DemoAfwijking(f"auditketen: {reden}")
     kop = records[-1]["hash"][:16] if records else "-"
     console.print(
         f"[bold]Auditketen {reden}[/bold]: {len(records)} records, kop {kop}…, "
         "gelijk aan het aparte anker"
     )
-    if not intact:
-        raise DemoAfwijking(f"auditketen: {reden}")
 
 
 async def hoofd() -> None:

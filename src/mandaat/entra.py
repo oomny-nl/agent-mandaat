@@ -9,8 +9,9 @@ learn.microsoft.com/entra/agent-id/agent-on-behalf-of-oauth-flow (geraadpleegd 1
 3. Resource-token: de agent identity doet `jwt-bearer` met `requested_token_use=on_behalf_of`,
    het gebruikerstoken als `assertion` (audience = de blueprint) en T1 als `client_assertion`.
 
-Verschil met Keycloak: Entra zet de delegatie niet in `act`. De agent staat in `azp`, de
-medewerker in `oid`, en de facetclaims `xms_act_fct` en `xms_sub_fct` geven de rollen aan.
+Verschil met Keycloak: Entra zet de delegatie niet in `act`. De agent staat in `azp` (v1: `appid`),
+de medewerker in `oid`, en de facetclaims `xms_act_fct` en `xms_sub_fct` geven de rollen aan
+(learn.microsoft.com/entra/agent-id/agent-token-claims, geraadpleegd 18-10-2026).
 """
 
 from __future__ import annotations
@@ -22,6 +23,8 @@ from typing import Any
 import httpx2
 
 UITWISSEL_AUDIENCE = "api://AzureADTokenExchange"
+AGENT_IDENTITY = "11"  # facetwaarde AgentIdentity
+AGENT_GEBRUIKER = "13"  # facetwaarde AgentIDUser: het eigen gebruikersaccount van een agent
 ASSERTION_TYPE = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
 JWT_BEARER = "urn:ietf:params:oauth:grant-type:jwt-bearer"
 
@@ -103,8 +106,9 @@ def namens_medewerker(agent: EntraAgent, t1: str, gebruikerstoken: str, scope: s
     Args:
         agent: Configuratie van de agent.
         t1: Blueprint-token uit stap 2.
-        gebruikerstoken: Token van de medewerker met als audience de blueprint.
-        scope: Eén gedelegeerde scope, bijvoorbeeld `api://<dossier-api>/dossier.lezen`.
+        gebruikerstoken: Token van de medewerker voor `api://<blueprint>/access_agent` (aud = de
+            blueprint).
+        scope: Eén gedelegeerde scope, bijvoorbeeld `api://<dossier_api_app_id>/dossier.lezen`.
 
     Returns:
         Het access token voor de dossier-API.
@@ -140,16 +144,33 @@ def normaliseer_keycloak(claims: dict[str, Any]) -> Delegatie:
     return Delegatie(claims["sub"], actor["client_id"], frozenset(str(claims["scope"]).split()))
 
 
-def normaliseer_entra(claims: dict[str, Any], toegelaten_agents: frozenset[str]) -> Delegatie:
-    """Entra Agent ID: agent in `azp`, medewerker in `oid`, scopes in `scp`.
+def _facetten(claims: dict[str, Any], naam: str) -> frozenset[str]:
+    """Waarden van een facetclaim: spatiegescheiden, volgorde zonder betekenis."""
+    waarde = claims.get(naam)
+    return frozenset(waarde.split()) if isinstance(waarde, str) else frozenset()
 
-    Een app-only token (zonder `scp`) of een token zonder actorfacet is geen delegatie en wordt
-    geweigerd; de agent mag in deze opzet nooit zonder medewerker handelen.
+
+def normaliseer_entra(claims: dict[str, Any], toegelaten_agents: frozenset[str]) -> Delegatie:
+    """Entra Agent ID, agent-OBO namens een mens: agent in `azp`, medewerker in `oid`.
+
+    Alleen dat scenario is een delegatie. Geweigerd worden: een actor zonder facet AgentIdentity,
+    een app-only token (`idtyp=app`, `scp` leeg of `/`) en een token waarvan het onderwerp de
+    agent zelf of zijn eigen gebruikersaccount is (`xms_sub_fct` met 11 of 13). De agent mag in
+    deze opzet nooit zonder medewerker handelen.
     """
-    if "xms_act_fct" not in claims:
-        raise ValueError("geen agenttoken: xms_act_fct ontbreekt")
-    if not claims.get("scp"):
+    if AGENT_IDENTITY not in _facetten(claims, "xms_act_fct"):
+        raise ValueError("geen agenttoken: xms_act_fct bevat geen AgentIdentity (11)")
+    if claims.get("idtyp") == "app":
+        raise ValueError("app-only token: de agent handelt zelfstandig, niet namens een medewerker")
+    if _facetten(claims, "xms_sub_fct") & {AGENT_IDENTITY, AGENT_GEBRUIKER}:
+        raise ValueError("onderwerp is de agent zelf of zijn gebruikersaccount, geen medewerker")
+    scopes = frozenset(str(claims.get("scp") or "").split()) - {"/"}
+    if not scopes:
         raise ValueError("app-only token: geen gedelegeerde scopes, dus geen medewerker")
-    if claims.get("azp") not in toegelaten_agents:
-        raise ValueError(f"agent {claims.get('azp')} is niet toegelaten")
-    return Delegatie(claims["oid"], claims["azp"], frozenset(str(claims["scp"]).split()))
+    agent = claims.get("azp") or claims.get("appid")
+    if agent not in toegelaten_agents:
+        raise ValueError(f"agent {agent} is niet toegelaten")
+    medewerker = claims.get("oid")
+    if not isinstance(medewerker, str) or not medewerker:
+        raise ValueError("oid van de medewerker ontbreekt")
+    return Delegatie(medewerker, str(agent), scopes)

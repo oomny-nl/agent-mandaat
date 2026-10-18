@@ -14,6 +14,7 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from typing import Any
+from urllib.parse import urlsplit, urlunsplit
 
 import httpx2
 import jwt
@@ -47,6 +48,18 @@ class Metadata:
     scopes: tuple[str, ...]
 
 
+def well_known(url: str, naam: str) -> str:
+    """Well-known-URI bij een URL met pad: ingevoegd tussen host en pad (RFC 8414 §3.1, RFC 9728).
+
+    `http://keycloak:8080/realms/lindevoort` wordt
+    `http://keycloak:8080/.well-known/oauth-authorization-server/realms/lindevoort`.
+    """
+    deel = urlsplit(url)
+    return urlunsplit(
+        (deel.scheme, deel.netloc, f"/.well-known/{naam}{deel.path.rstrip('/')}", "", "")
+    )
+
+
 def ontdek(resource_url: str) -> Metadata:
     """Ontdek de autorisatieserver via de MCP-server (RFC 9728, daarna RFC 8414).
 
@@ -55,16 +68,17 @@ def ontdek(resource_url: str) -> Metadata:
 
     Returns:
         Resource, issuer, token-endpoint en ondersteunde scopes.
+
+    Raises:
+        ValueError: Als `resource` of `issuer` in de metadata niet klopt (RFC 9728 §3.3,
+            RFC 8414 §3.3).
     """
-    basis, pad = resource_url.split("//", 1)[1].split("/", 1)
-    schema = resource_url.split("//", 1)[0]
-    prm_url = f"{schema}//{basis}/.well-known/oauth-protected-resource/{pad}"
+    prm_url = well_known(resource_url, "oauth-protected-resource")
     prm = httpx2.get(prm_url, timeout=10).raise_for_status().json()
     if prm["resource"] != resource_url:
         raise ValueError(f"metadata hoort bij {prm['resource']}, niet bij {resource_url}")
     issuer = prm["authorization_servers"][0]
-    realm_basis, realm = issuer.split("/realms/")
-    as_url = f"{realm_basis}/realms/{realm}/.well-known/oauth-authorization-server"
+    as_url = well_known(issuer, "oauth-authorization-server")
     meta = httpx2.get(as_url, timeout=10).raise_for_status().json()
     if meta["issuer"] != issuer:
         raise ValueError(f"issuer {meta['issuer']} wijkt af van {issuer}")

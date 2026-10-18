@@ -15,14 +15,15 @@ Michael Owen Meijer, Oomny B.V. · identity-architect en AI-engineer voor overhe
 
 AI-agents krijgen toegang tot dossiers, mailboxen en vakapplicaties. Vaak met het token van de
 gebruiker, een gedeeld API-geheim of een serviceaccount met brede rechten. Dan kan een
-gemanipuleerde agent alles wat die identiteit kan, en ziet niemand achteraf wie wat deed.
+gemanipuleerde agent alles wat die identiteit kan, en is achteraf niet te zien of de mens of de
+agent handelde.
 
 ## De aanpak
 
-Een agent krijgt dezelfde identity-zorg als een medewerker:
+Een agent wordt als identiteit even serieus behandeld als een medewerker:
 
 - **Eigen identiteit.** De agent is een eigen client met een sleutel in plaats van een gedeeld
-  geheim. In Entra: een agent identity met sponsor, zonder geheim via een managed identity.
+  geheim. In de Entra-variant: een agent identity met sponsor, zonder geheim via een managed identity.
 - **Mandaat per taak.** De medewerker geeft toestemming voor één agent en één taak. Per actie
   krijgt de agent een token met alleen de rechten voor die ene tool, 60 seconden geldig,
   eenmalig te gebruiken en gebonden aan zijn sleutel (OAuth 2.0 Token Exchange, DPoP).
@@ -30,9 +31,9 @@ Een agent krijgt dezelfde identity-zorg als een medewerker:
   Een agent legt nooit een besluit vast.
 - **Intrekbaar.** De medewerker trekt het mandaat in en de volgende actie faalt, ook met vooraf
   opgehaalde tokens. De beheerder heeft een noodstop.
-- **Auditspoor.** Elke actie en elke weigering door de API staat in een hashketen met een apart
-  anker: wie, namens wie, welke tool, welk dossier, welk token, waarom. Weigeringen door Keycloak
-  staan in de Keycloak-events.
+- **Auditspoor.** Elke beslissing van de API over een toolactie of een mandaat staat in een
+  hashketen met een apart anker: wie, namens wie, welke tool, welk dossier, welk token, waarom.
+  Geweigerde tokenaanvragen staan in de Keycloak-events.
 
 ## Het bewijs
 
@@ -41,12 +42,12 @@ werkt via MCP op een dossier-API van een fictieve gemeente. In het tweede scenar
 demo een agent die een ingevoegde instructie uit een dossier volgt, en de grens houdt: Keycloak weigert het token
 voor een besluit, en de API weigert het dossier buiten het mandaat.
 
-51 integratietests tegen de echte keten. Een dreigingsmodel tegen de OWASP Top 10 for Agentic
+55 integratietests tegen de echte keten. Een dreigingsmodel tegen de OWASP Top 10 for Agentic
 Applications 2026 en de OWASP Non-Human Identities Top 10, met per risico de test die het bewijst.
 Een eerlijke paragraaf over wat dit niet oplost.
 
 Keycloak 26.8 (open source) en Microsoft Entra Agent ID naast elkaar, met Terraform voor de
-Entra-kant (gevalideerd, niet in een tenant uitgerold).
+Entra-kant (gecontroleerd met terraform validate en gemockte tests, niet in een tenant uitgerold).
 
 ## Waarom van mij
 

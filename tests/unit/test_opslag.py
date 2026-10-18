@@ -1,12 +1,14 @@
-"""Mandaatregister, generatiebinding, eenmalig gebruik en auditketen."""
+"""Mandaatregister, binding aan de uitgiftetijd, eenmalig gebruik en auditketen."""
 
 from __future__ import annotations
 
 import json
 import math
+import sqlite3
 import threading
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
@@ -141,19 +143,95 @@ def test_geen_mandaat(opslag: Opslag) -> None:
 def test_gelijktijdig_gebruik_van_een_token(opslag: Opslag) -> None:
     m = mandaat(opslag)
     c = claims(m["geldig_vanaf"])
-    uitkomsten: list[bool] = []
     start = threading.Barrier(16)
 
-    def poging() -> None:
+    def poging(_: int) -> str:
         start.wait()
-        uitkomsten.append(opslag.laat_toe(c, "2026-0142").toegestaan)
+        return opslag.laat_toe(c, "2026-0142").reden
 
-    draden = [threading.Thread(target=poging) for _ in range(16)]
-    for d in draden:
-        d.start()
-    for d in draden:
-        d.join()
-    assert uitkomsten.count(True) == 1
+    # map() geeft elke uitzondering in een draad door; zo telt een gecrashte poging niet stil mee.
+    with ThreadPoolExecutor(16) as pool:
+        redenen = list(pool.map(poging, range(16)))
+    assert sorted(redenen) == ["binnen_mandaat"] + ["token_al_gebruikt"] * 15
+
+
+def test_registratie_en_intrekking_schrijven_hun_audit_mee(tmp_path: Path) -> None:
+    opslag = _met_anker(tmp_path)
+    gegevens = {
+        "medewerker": "sub-sanne",
+        "gebruiker": "sanne",
+        "naam": "",
+        "agent": "dossierassistent",
+        "dossier": "2026-0142",
+        "sid": "sessie-1",
+    }
+    m = opslag.registreer_mandaat(gegevens, set(), audit={"beslissing": "mandaat_verleend"})
+    assert opslag.trek_in(m["id"], "sub-sanne", audit={"beslissing": "mandaat_ingetrokken"})
+    assert not opslag.trek_in(m["id"], "sub-sanne", audit={"beslissing": "mandaat_ingetrokken"})
+    records = opslag.auditlog()
+    assert [(r["beslissing"], r["mandaat"]) for r in records] == [
+        ("mandaat_verleend", m["id"]),
+        ("mandaat_ingetrokken", m["id"]),
+    ]
+    assert controleer_tegen_anker(records, lees_anker(tmp_path / "anker" / "anker.log")) == (
+        True,
+        "intact",
+    )
+
+
+def test_mislukt_auditrecord_draait_de_registratie_terug(opslag: Opslag) -> None:
+    gegevens = {
+        "medewerker": "sub-sanne",
+        "gebruiker": "sanne",
+        "naam": "",
+        "agent": "dossierassistent",
+        "dossier": "2026-0142",
+        "sid": "sessie-1",
+    }
+    with pytest.raises(TypeError):
+        opslag.registreer_mandaat(gegevens, set(), audit={"niet-serialiseerbaar": object()})
+    assert opslag.mandaten() == []
+    assert opslag.auditlog() == []
+
+
+def test_notitie_en_besluit_schrijven_hun_audit_mee(opslag: Opslag) -> None:
+    nr = opslag.voeg_notitie_toe("2026-0142", "t", "sanne", "agent", audit={"beslissing": "ja"})
+    besluit = opslag.leg_besluit_vast("2026-0142", "toegekend", "sanne", audit={"beslissing": "ja"})
+    assert [(r.get("notitie"), r.get("besluit")) for r in opslag.auditlog()] == [
+        (nr, None),
+        (None, besluit),
+    ]
+
+
+def test_mislukte_wijziging_laat_geen_toegestaan_achter(opslag: Opslag) -> None:
+    opslag._db.execute("DROP TABLE besluiten")
+    with pytest.raises(sqlite3.OperationalError):
+        opslag.leg_besluit_vast("2026-0142", "toegekend", "sanne", audit={"beslissing": "ja"})
+    assert opslag.auditlog() == []
+
+
+def test_mislukt_auditrecord_draait_de_notitie_terug(opslag: Opslag) -> None:
+    with pytest.raises(TypeError):
+        opslag.voeg_notitie_toe("2026-0142", "t", "sanne", "agent", audit={"x": object()})
+    assert opslag.notities("2026-0142") == []
+    assert opslag.auditlog() == []
+
+
+def test_auditketen_blijft_heel_bij_twee_verbindingen(tmp_path: Path) -> None:
+    """Twee processen op één database: BEGIN IMMEDIATE voorkomt een vertakte keten."""
+    a, b = (Opslag(tmp_path / "gedeeld.db", 2) for _ in range(2))
+    start = threading.Barrier(8)
+
+    def schrijf(i: int) -> None:
+        start.wait()
+        for j in range(25):
+            (a if i % 2 else b).audit({"beslissing": "toegestaan", "i": i, "j": j})
+
+    with ThreadPoolExecutor(8) as pool:
+        list(pool.map(schrijf, range(8)))
+    records = a.auditlog()
+    assert len(records) == 200
+    assert controleer_keten(records) == (True, None)
 
 
 def test_dpop_bewijs_eenmalig(opslag: Opslag) -> None:

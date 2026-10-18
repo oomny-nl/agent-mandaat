@@ -10,14 +10,16 @@ from __future__ import annotations
 
 import json
 import logging
-from dataclasses import dataclass
-from functools import cached_property
+import threading
+from dataclasses import dataclass, field
 from typing import Any
+from urllib.parse import urlsplit
 
 import anyio
 import uvicorn
 from mcp.server.mcpserver import Context, MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
+from mcp.server.transport_security import TransportSecuritySettings
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
@@ -25,8 +27,8 @@ from mandaat.config import Instellingen
 from mandaat.geheimen import Geheimen
 from mandaat.server.gegevens import DOSSIERS, mag_zelf
 from mandaat.server.opslag import HistorieGewijzigd, Opslag
-from mandaat.server.poort import Agentpoort, challenge
-from mandaat.server.tokens import Gecontroleerd, Tokencontrole, TokenFout
+from mandaat.server.poort import MAX_BODY, Agentpoort, TeGroot, challenge, lees_body
+from mandaat.server.tokens import Gecontroleerd, Tokencontrole, TokenFout, actor
 
 log = logging.getLogger("dossier-mcp")
 
@@ -35,25 +37,38 @@ TOOLSCOPES = {
     "notitie_toevoegen": "notitie:schrijven",
     "besluit_vastleggen": "besluit:nemen",
 }
+MAX_UITKOMST = 200
 
 
 @dataclass
 class Dienst:
-    """Gedeelde onderdelen van de API (lui opgebouwd, zodat tests ze kunnen vervangen)."""
+    """Gedeelde onderdelen van de API: lui opgebouwd, en precies één keer.
+
+    Ook bij gelijktijdige eerste verzoeken bestaat er maar één `Opslag` (één verbinding en één
+    slot); twee instanties zouden elk hun eigen auditketen kunnen voortzetten.
+    """
 
     inst: Instellingen
+    _slot: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
+    _opslag: Opslag | None = field(default=None, init=False, repr=False)
+    _controle: Tokencontrole | None = field(default=None, init=False, repr=False)
 
-    @cached_property
+    @property
     def opslag(self) -> Opslag:
         """Database van de API."""
-        return Opslag(self.inst.db_pad, self.inst.max_skew, self.inst.anker_pad)
+        with self._slot:
+            if self._opslag is None:
+                self._opslag = Opslag(self.inst.db_pad, self.inst.max_skew, self.inst.anker_pad)
+            return self._opslag
 
-    @cached_property
+    @property
     def controle(self) -> Tokencontrole:
         """Tokencontrole tegen Keycloak."""
-        return Tokencontrole(
-            self.inst, Geheimen(self.inst.geheimen_dir).wachtwoord("resource-client")
-        )
+        with self._slot:
+            if self._controle is None:
+                geheim = Geheimen(self.inst.geheimen_dir).wachtwoord("resource-client")
+                self._controle = Tokencontrole(self.inst, geheim)
+            return self._controle
 
     @property
     def metadata_url(self) -> str:
@@ -81,15 +96,27 @@ def _auditrecord(claims: dict[str, Any], tool: str, dossier: str, **velden: Any)
         "scope": TOOLSCOPES[tool],
         "dossier": dossier,
         "medewerker": claims.get("sub"),
-        "agent": (claims.get("act") or {}).get("client_id"),
+        "agent": actor(claims),
         "token_jti": claims.get("jti"),
         "dpop_jkt": (claims.get("cnf") or {}).get("jkt"),
         **velden,
     }
 
 
-def _laat_toe(dienst: Dienst, claims: dict[str, Any], tool: str, dossier: str) -> str:
-    """Volledige toelating van een toolactie; geeft de gebruikersnaam van de medewerker."""
+def _laat_toe(
+    dienst: Dienst, claims: dict[str, Any], tool: str, dossier: str
+) -> tuple[str, dict[str, Any]]:
+    """Volledige toelating van een toolactie.
+
+    Een weigering gaat direct het auditlog in. Bij toelating schrijft de tool het auditrecord
+    samen met het resultaat, zodat er geen `toegestaan` staat voor een actie die mislukte.
+
+    Returns:
+        De gebruikersnaam van de medewerker en het auditrecord van de toelating.
+
+    Raises:
+        ToolError: Als de actie niet is toegestaan.
+    """
     scope = TOOLSCOPES[tool]
     if scope == "besluit:nemen":
         reden = "gedelegeerde_partij_legt_geen_besluit_vast"
@@ -101,21 +128,20 @@ def _laat_toe(dienst: Dienst, claims: dict[str, Any], tool: str, dossier: str) -
         gebruiker = dienst.opslag.gebruiker_van(mandaat) if mandaat else None
         if toelating.toegestaan and gebruiker is not None:
             reden = mag_zelf(gebruiker, scope, dossier) or reden
-    toegestaan = reden == "binnen_mandaat"
-    dienst.opslag.audit(
-        _auditrecord(
-            claims,
-            tool,
-            dossier,
-            beslissing="toegestaan" if toegestaan else "geweigerd",
-            reden=reden,
-            mandaat=mandaat,
-            gebruiker=gebruiker,
-        )
+    toegestaan = reden == "binnen_mandaat" and gebruiker is not None
+    record = _auditrecord(
+        claims,
+        tool,
+        dossier,
+        beslissing="toegestaan" if toegestaan else "geweigerd",
+        reden=reden,
+        mandaat=mandaat,
+        gebruiker=gebruiker,
     )
     if not toegestaan or gebruiker is None:
+        dienst.opslag.audit(record)
         raise ToolError(f"GEWEIGERD door de dossier-API: {reden}")
-    return gebruiker
+    return gebruiker, record
 
 
 def _claims(ctx: Context) -> dict[str, Any]:
@@ -139,9 +165,12 @@ def maak_mcp(dienst: Dienst) -> MCPServer:
         description="Lees een dossier (aanvraag, stukken, bijlagen).",
     )
     async def dossier_lezen(dossier: str, ctx: Context) -> str:
-        await anyio.to_thread.run_sync(_laat_toe, dienst, _claims(ctx), "dossier_lezen", dossier)
+        _, record = await anyio.to_thread.run_sync(
+            _laat_toe, dienst, _claims(ctx), "dossier_lezen", dossier
+        )
         inhoud = {**DOSSIERS[dossier], "notities": dienst.opslag.notities(dossier)}
         inhoud.pop("behandelaar", None)
+        await anyio.to_thread.run_sync(dienst.opslag.audit, record)
         return json.dumps(inhoud, ensure_ascii=False, indent=2)
 
     @mcp.tool(
@@ -149,10 +178,17 @@ def maak_mcp(dienst: Dienst) -> MCPServer:
     )
     async def notitie_toevoegen(dossier: str, tekst: str, ctx: Context) -> str:
         claims = _claims(ctx)
-        gebruiker = await anyio.to_thread.run_sync(
+        gebruiker, record = await anyio.to_thread.run_sync(
             _laat_toe, dienst, claims, "notitie_toevoegen", dossier
         )
-        nr = dienst.opslag.voeg_notitie_toe(dossier, tekst, gebruiker, claims["act"]["client_id"])
+        nr = await anyio.to_thread.run_sync(
+            dienst.opslag.voeg_notitie_toe,
+            dossier,
+            tekst,
+            gebruiker,
+            claims["act"]["client_id"],
+            record,
+        )
         return f"Notitie {nr} toegevoegd aan {dossier} (concept, namens {gebruiker})"
 
     @mcp.tool(meta={"scope": "besluit:nemen"}, description="Leg een besluit vast op een aanvraag.")
@@ -176,7 +212,7 @@ def _bearerfout(dienst: Dienst, fout: TokenFout, handeling: str) -> Response:
             "fout": fout.code,
             "medewerker": fout.claims.get("sub"),
             "gebruiker": fout.claims.get("preferred_username"),
-            "agent": (fout.claims.get("act") or {}).get("client_id"),
+            "agent": actor(fout.claims),
         }
     )
     return JSONResponse(
@@ -228,49 +264,79 @@ def _beheerroutes(mcp: MCPServer, dienst: Dienst) -> None:
             token = await anyio.to_thread.run_sync(_medewerker, dienst, request, "besluit:nemen")
         except TokenFout as fout:
             return _bearerfout(dienst, fout, "besluit (eigen handeling)")
-        uitkomst = str((await request.json()).get("uitkomst", ""))
-        return await anyio.to_thread.run_sync(
-            _besluit, dienst, token.claims, request.path_params["dossier"], uitkomst
-        )
+        dossier = request.path_params["dossier"]
+        uitkomst, fout = await _lees_uitkomst(request)
+        if uitkomst is None:
+            return await anyio.to_thread.run_sync(_besluitfout, dienst, token.claims, dossier, fout)
+        return await anyio.to_thread.run_sync(_besluit, dienst, token.claims, dossier, uitkomst)
 
 
-def _beheer(dienst: Dienst, claims: dict[str, Any], beslissing: str, **velden: Any) -> None:
-    """Auditrecord voor elk beheerverzoek, ook als het wordt geweigerd."""
-    dienst.opslag.audit(
-        {
-            "laag": "api-beheer",
-            "beslissing": beslissing,
-            "medewerker": claims.get("sub"),
-            "gebruiker": claims.get("preferred_username"),
-            **velden,
-        }
-    )
+async def _lees_uitkomst(request: Request) -> tuple[str | None, str]:
+    """`uitkomst` uit de JSON-body (begrensd), of (None, reden) bij een ongeldig verzoek."""
+    try:
+        body = await lees_body(request.receive)
+    except TeGroot:
+        return None, f"verzoek groter dan {MAX_BODY} bytes"
+    try:
+        inhoud = json.loads(body)
+    except ValueError:
+        return None, "body is geen geldige JSON"
+    uitkomst = inhoud.get("uitkomst") if isinstance(inhoud, dict) else None
+    if not isinstance(uitkomst, str) or not uitkomst.strip():
+        return None, "veld uitkomst ontbreekt of is geen tekst"
+    if len(uitkomst) > MAX_UITKOMST:
+        return None, f"uitkomst langer dan {MAX_UITKOMST} tekens"
+    return uitkomst.strip(), ""
 
 
 def _weiger_beheer(
     dienst: Dienst, claims: dict[str, Any], handeling: str, reden: str, status: int
 ) -> Response:
-    _beheer(dienst, claims, "geweigerd", tool=handeling, reden=reden, dossier=claims.get("taak"))
+    """Weigering van een beheerverzoek, met auditrecord."""
+    dienst.opslag.audit(
+        _beheerrecord(claims, "geweigerd", tool=handeling, reden=reden, dossier=claims.get("taak"))
+    )
     return JSONResponse({"error": reden}, status_code=status)
 
 
+def _beheerrecord(claims: dict[str, Any], beslissing: str, **velden: Any) -> dict[str, Any]:
+    return {
+        "laag": "api-beheer",
+        "beslissing": beslissing,
+        "medewerker": claims.get("sub"),
+        "gebruiker": claims.get("preferred_username"),
+        **velden,
+    }
+
+
 def _trek_in(dienst: Dienst, claims: dict[str, Any], mandaat_id: str) -> Response:
-    if not dienst.opslag.trek_in(mandaat_id, claims["sub"]):
+    record = _beheerrecord(claims, "mandaat_ingetrokken")
+    if not dienst.opslag.trek_in(mandaat_id, claims["sub"], audit=record):
         reden = "geen actief mandaat van deze medewerker"
         return _weiger_beheer(dienst, claims, f"mandaat intrekken {mandaat_id}", reden, 404)
-    _beheer(dienst, claims, "mandaat_ingetrokken", mandaat=mandaat_id)
     return JSONResponse({"mandaat": mandaat_id, "status": "ingetrokken"})
 
 
-def _sessies_beeindigd(dienst: Dienst, sub: str) -> tuple[set[str] | None, str, int]:
-    """Eerdere sessies als die bij Keycloak alle beëindigd zijn, anders (None, reden, status)."""
+def _sessies_beeindigd(dienst: Dienst, sub: str, sid: str) -> tuple[set[str] | None, str, int]:
+    """Sessies van eerdere mandaten als alleen de eigen werkpleksessie nog actief is.
+
+    Het gedelegeerde token van Keycloak draagt geen `sid`: de API kan niet zien uit welke sessie het
+    subject token kwam. Daarom moet bij registratie elke andere werkpleksessie van de medewerker
+    beëindigd zijn, met of zonder eerder mandaat. Anders kan haar subject token tokens opleveren
+    die onder dit nieuwe mandaat vallen.
+
+    Returns:
+        (eerdere sessies, "", 0), of (None, reden, status) als registratie niet mag.
+    """
     eerder = dienst.opslag.eerdere_sessies(sub, dienst.inst.agent_id)
     try:
-        nog_actief = eerder & dienst.controle.actieve_sessies(sub)
+        actief = dienst.controle.actieve_sessies(sub)
     except TokenFout as fout:
         return None, fout.reden, fout.status
-    if nog_actief:
+    if eerder & actief.keys():
         return None, "de sessie van een eerder mandaat is nog actief; log die eerst uit", 409
+    if any(s != sid and dienst.inst.werkplek_id in c for s, c in actief.items()):
+        return None, "er is nog een andere werkpleksessie van deze medewerker actief", 409
     return eerder, "", 0
 
 
@@ -292,57 +358,76 @@ def _verleen(dienst: Dienst, claims: dict[str, Any]) -> Response:
         "dossier": taak,
         "sid": sid,
     }
-    # De delegatiebron van eerdere mandaten moet echt weg zijn: hun Keycloak-sessies zijn beëindigd.
+    # Elke andere delegatiebron moet echt weg zijn: alleen de eigen werkpleksessie is nog actief.
     # De registratie controleert in haar transactie dat de historie sindsdien niet veranderde.
     for _ in range(3):
-        eerder, reden, status = _sessies_beeindigd(dienst, claims["sub"])
+        eerder, reden, status = _sessies_beeindigd(dienst, claims["sub"], sid)
         if eerder is None:
             return _weiger_beheer(dienst, claims, handeling, reden, status)
+        record = _beheerrecord(claims, "mandaat_verleend", agent=dienst.inst.agent_id, dossier=taak)
         try:
-            mandaat = dienst.opslag.registreer_mandaat(gegevens, eerder)
+            mandaat = dienst.opslag.registreer_mandaat(gegevens, eerder, audit=record)
         except HistorieGewijzigd:
             continue
         except ValueError as fout:
             return _weiger_beheer(dienst, claims, handeling, str(fout), 409)
-        _beheer(
-            dienst,
-            claims,
-            "mandaat_verleend",
-            mandaat=mandaat["id"],
-            agent=dienst.inst.agent_id,
-            dossier=taak,
-        )
         return JSONResponse(mandaat, status_code=201)
     return _weiger_beheer(dienst, claims, handeling, "mandaathistorie bleef wijzigen", 409)
+
+
+def _besluitrecord(claims: dict[str, Any], dossier: str, reden: str | None) -> dict[str, Any]:
+    return {
+        "laag": "api-medewerker",
+        "tool": "besluit (eigen handeling)",
+        "dossier": dossier,
+        "medewerker": claims["sub"],
+        "gebruiker": str(claims.get("preferred_username", "")),
+        "agent": None,
+        "beslissing": "geweigerd" if reden else "toegestaan",
+        "reden": reden or "eigen_bevoegdheid",
+    }
+
+
+def _besluitfout(dienst: Dienst, claims: dict[str, Any], dossier: str, reden: str) -> Response:
+    """Ongeldig besluitverzoek: 400, met auditrecord."""
+    dienst.opslag.audit(_besluitrecord(claims, dossier, f"ongeldig verzoek: {reden}"))
+    return JSONResponse({"error": "invalid_request", "error_description": reden}, status_code=400)
 
 
 def _besluit(dienst: Dienst, claims: dict[str, Any], dossier: str, uitkomst: str) -> Response:
     gebruiker = str(claims.get("preferred_username", ""))
     reden = mag_zelf(gebruiker, "besluit:nemen", dossier)
-    dienst.opslag.audit(
-        {
-            "laag": "api-medewerker",
-            "tool": "besluit (eigen handeling)",
-            "dossier": dossier,
-            "medewerker": claims["sub"],
-            "gebruiker": gebruiker,
-            "agent": None,
-            "beslissing": "geweigerd" if reden else "toegestaan",
-            "reden": reden or "eigen_bevoegdheid",
-        }
-    )
+    record = _besluitrecord(claims, dossier, reden)
     if reden:
+        dienst.opslag.audit(record)
         return JSONResponse({"error": reden}, status_code=403)
-    nr = dienst.opslag.leg_besluit_vast(dossier, uitkomst, gebruiker)
+    nr = dienst.opslag.leg_besluit_vast(dossier, uitkomst, gebruiker, audit=record)
     return JSONResponse(
         {"besluit": nr, "dossier": dossier, "uitkomst": uitkomst, "door": gebruiker}
+    )
+
+
+def transportbeveiliging(resource_url: str) -> TransportSecuritySettings:
+    """Host- en Origin-controle van de MCP-transportlaag (DNS-rebinding).
+
+    Alleen de host uit de canonieke resource-URI is toegestaan. Er is geen browserclient, dus een
+    meegestuurde `Origin` is altijd ongeldig (403); clients zonder `Origin` gaan door.
+    """
+    return TransportSecuritySettings(
+        enable_dns_rebinding_protection=True,
+        allowed_hosts=[urlsplit(resource_url).netloc],
+        allowed_origins=[],
     )
 
 
 def maak_app(dienst: Dienst) -> Agentpoort:
     """De volledige ASGI-app: MCP plus routes, achter de Agentpoort."""
     mcp = maak_mcp(dienst)
-    app = mcp.streamable_http_app(stateless_http=True, json_response=True, host="0.0.0.0")  # noqa: S104
+    app = mcp.streamable_http_app(
+        stateless_http=True,
+        json_response=True,
+        transport_security=transportbeveiliging(dienst.inst.resource_url),
+    )
     return Agentpoort(
         app, lambda: dienst.controle, lambda: dienst.opslag, TOOLSCOPES, dienst.metadata_url
     )

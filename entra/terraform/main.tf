@@ -1,8 +1,8 @@
 # Entra Agent ID-variant van de dossierassistent.
 #
 # Niet tegen een tenant gevalideerd: CI draait alleen `terraform fmt -check` en `terraform validate`.
-# Graph-endpoints volgen learn.microsoft.com/entra/agent-id (geraadpleegd 17-10-2026); de agent-
-# identity-API is deels nog beta.
+# Graph-endpoints volgen learn.microsoft.com/entra/agent-id en de Graph v1.0-referentie
+# (geraadpleegd 18-10-2026).
 #
 # Opbouw, gelijk aan de Keycloak-variant:
 # - de agent heeft een eigen identiteit (agent identity uit een blueprint, met sponsor en eigenaar);
@@ -62,6 +62,13 @@ resource "msgraph_resource" "dossier_api" {
   }
 }
 
+resource "msgraph_update_resource" "dossier_api_uri" {
+  url = "applications/${msgraph_resource.dossier_api.id}"
+  body = {
+    identifierUris = ["api://${msgraph_resource.dossier_api.output.app_id}"]
+  }
+}
+
 resource "msgraph_resource" "dossier_api_principal" {
   url = "servicePrincipals"
   body = {
@@ -71,15 +78,37 @@ resource "msgraph_resource" "dossier_api_principal" {
 
 # Blueprint: het sjabloon waaruit agent identities ontstaan, met sponsor en eigenaar.
 resource "msgraph_resource" "blueprint" {
-  url = "applications"
+  url = "applications/microsoft.graph.agentIdentityBlueprint"
   body = {
-    "@odata.type"         = "Microsoft.Graph.AgentIdentityBlueprint"
     displayName           = "Blueprint ${var.naam}"
     "sponsors@odata.bind" = ["${local.graph}/users/${var.sponsor_object_id}"]
     "owners@odata.bind"   = ["${local.graph}/users/${var.eigenaar_object_id}"]
   }
   response_export_values = {
     app_id = "appId"
+  }
+}
+
+# De werkplek vraagt voor de medewerker een token met de blueprint als audience (Tc); de agent
+# wisselt dat in stap 3 in. Daarvoor publiceert de blueprint een identifier-URI en een scope.
+resource "random_uuid" "toegang_agent" {}
+
+resource "msgraph_update_resource" "blueprint_api" {
+  url = "applications/${msgraph_resource.blueprint.id}"
+  body = {
+    identifierUris = ["api://${msgraph_resource.blueprint.output.app_id}"]
+    api = {
+      oauth2PermissionScopes = [
+        {
+          id                      = random_uuid.toegang_agent.result
+          value                   = "access_agent"
+          type                    = "User"
+          isEnabled               = true
+          adminConsentDisplayName = "Toegang tot de dossierassistent"
+          adminConsentDescription = "De werkplek mag de agent aanroepen namens de aangemelde medewerker."
+        }
+      ]
+    }
   }
 }
 
@@ -95,8 +124,7 @@ resource "msgraph_resource" "blueprint_fic" {
 }
 
 resource "msgraph_resource" "blueprint_principal" {
-  url         = "servicePrincipals/microsoft.graph.agentIdentityBlueprintPrincipal"
-  api_version = "beta"
+  url = "servicePrincipals/microsoft.graph.agentIdentityBlueprintPrincipal"
   body = {
     appId = msgraph_resource.blueprint.output.app_id
   }
@@ -104,8 +132,7 @@ resource "msgraph_resource" "blueprint_principal" {
 
 # De agent zelf: een eigen identiteit per agent, met dezelfde sponsor.
 resource "msgraph_resource" "agent" {
-  url         = "servicePrincipals/microsoft.graph.agentIdentity"
-  api_version = "beta"
+  url = "servicePrincipals/microsoft.graph.agentIdentity"
   body = {
     displayName              = "Dossierassistent ${var.naam}"
     agentIdentityBlueprintId = msgraph_resource.blueprint.output.app_id

@@ -120,15 +120,21 @@ def _kop(bewijs: str) -> dict[str, Any]:
     if kop.get("alg") not in TOEGESTANE_ALGORITMEN:
         raise DPoPFout(f"DPoP-algoritme {kop.get('alg')!r} niet toegestaan")
     jwk = kop.get("jwk")
-    if not isinstance(jwk, dict) or jwk.get("kty") != "EC" or "d" in jwk:
-        raise DPoPFout("DPoP-bewijs mist een publieke EC-sleutel in de kop")
+    if not isinstance(jwk, dict) or jwk.get("kty") != "EC" or jwk.get("crv") != "P-256":
+        raise DPoPFout("DPoP-bewijs mist een publieke P-256-sleutel in de kop")
+    if "d" in jwk:
+        raise DPoPFout("DPoP-kop bevat een privésleutel")
     return kop
 
 
 def _controleer_claims(claims: dict[str, Any], htm: str, htu: str, access_token: str) -> None:
     if claims.get("htm") != htm.upper():
         raise DPoPFout("htm komt niet overeen met de HTTP-methode")
-    if normaliseer_htu(str(claims.get("htu", ""))) != normaliseer_htu(htu):
+    try:
+        gelijk = normaliseer_htu(str(claims.get("htu", ""))) == normaliseer_htu(htu)
+    except ValueError as fout:
+        raise DPoPFout(f"htu is geen geldige URL: {fout}") from fout
+    if not gelijk:
         raise DPoPFout("htu komt niet overeen met de URL van het verzoek")
     if claims.get("ath") != token_hash(access_token):
         raise DPoPFout("ath komt niet overeen met het access token")

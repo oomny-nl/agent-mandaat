@@ -47,10 +47,16 @@ def test_query_en_fragment_tellen_niet_mee(sleutel: DPoPSleutel) -> None:
     valideer_bewijs(bewijs, "POST", URL, TOKEN, sleutel.jkt)
 
 
-def test_thumbprint_rfc7638_voorbeeld() -> None:
-    # Voorbeeld-EC-sleutel; de thumbprint hangt alleen af van crv, kty, x en y.
-    jwk = {"kty": "EC", "crv": "P-256", "x": "a", "y": "b", "kid": "genegeerd"}
-    assert thumbprint(jwk) == thumbprint({k: jwk[k] for k in ("kty", "crv", "x", "y")})
+def test_thumbprint_rfc9449_voorbeeld() -> None:
+    # De sleutel uit het DPoP-bewijs van RFC 9449 §4.2 en zijn `jkt` uit §6.1.
+    jwk = {
+        "kty": "EC",
+        "x": "l8tFrhx-34tV3hRICRDY9zCkDlpBhF42UQUfWVAWBFs",
+        "y": "9VE4jf_Ok_o64zbTTlcuNJajHmt6v9TDVrU0CdvGRDA",
+        "crv": "P-256",
+    }
+    assert thumbprint(jwk) == "0ZcOCORZNYy-DWpqq30jZyJGHTN0d2HglBV3uiguA4I"
+    assert thumbprint({**jwk, "kid": "genegeerd"}) == thumbprint(jwk)
 
 
 @pytest.mark.parametrize(
@@ -58,6 +64,7 @@ def test_thumbprint_rfc7638_voorbeeld() -> None:
     [
         ({"htm": "GET"}, "htm"),
         ({"htu": "http://elders:8000/mcp"}, "htu"),
+        ({"htu": "http://[::1/mcp"}, "geldige URL"),
         ({"ath": token_hash("ander token")}, "ath"),
         ({"iat": int(time.time()) - 600}, "verlopen"),
         ({"iat": int(time.time()) + 600}, "verlopen"),
@@ -87,7 +94,13 @@ def test_symmetrisch_algoritme_geweigerd(sleutel: DPoPSleutel) -> None:
 
 def test_privesleutel_in_kop_geweigerd(sleutel: DPoPSleutel) -> None:
     jwk = json.loads(ECAlgorithm.to_jwk(sleutel.sleutel_priv))
-    with pytest.raises(DPoPFout, match="publieke"):
+    with pytest.raises(DPoPFout, match="privésleutel"):
+        valideer_bewijs(_bewijs(sleutel, kop={"jwk": jwk}), "POST", URL, TOKEN, sleutel.jkt)
+
+
+def test_andere_curve_dan_p256_geweigerd(sleutel: DPoPSleutel) -> None:
+    jwk = {**sleutel.publieke_jwk, "crv": "P-384"}
+    with pytest.raises(DPoPFout, match="P-256"):
         valideer_bewijs(_bewijs(sleutel, kop={"jwk": jwk}), "POST", URL, TOKEN, sleutel.jkt)
 
 
