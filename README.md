@@ -235,7 +235,7 @@ Entra-antwoorden en `terraform validate`, niet tegen een echte tenant.
 | `src/mandaat/werkplek/` | Werkplek van de medewerker: login met PKCE en consent, mandaatbeheer |
 | `src/mandaat/bootstrap/` | Inrichting van de realm via de Admin REST API |
 | `entra/` | Terraform en tokenprovider voor Entra Agent ID |
-| `tests/` | 194 unittests, 55 integratietests tegen de echte keten |
+| `tests/` | 203 unittests, 55 integratietests tegen de echte keten |
 | `docs/` | Ontwerp, dreigingsmodel, one-pager |
 
 Kwaliteit: `ruff`, `ty`, `pytest`, gitleaks en `terraform validate` in CI. Versies zijn exact

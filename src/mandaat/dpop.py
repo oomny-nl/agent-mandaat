@@ -146,7 +146,9 @@ def _controleer_claims(claims: dict[str, Any], htm: str, htu: str, access_token:
     if claims.get("ath") != token_hash(access_token):
         raise DPoPFout("ath komt niet overeen met het access token")
     iat = claims.get("iat")
-    if type(iat) is not int or abs(time.time() - iat) > BEWIJS_GELDIGHEID_S:
+    nu = time.time()
+    # Vergelijken in plaats van aftrekken: `nu - iat` loopt over bij een iat als 10**400.
+    if type(iat) is not int or not nu - BEWIJS_GELDIGHEID_S <= iat <= nu + BEWIJS_GELDIGHEID_S:
         raise DPoPFout("DPoP-bewijs is verlopen of komt uit de toekomst")
     if not isinstance(claims.get("jti"), str) or not claims["jti"]:
         raise DPoPFout("DPoP-bewijs mist jti")

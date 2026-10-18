@@ -251,11 +251,11 @@ def _poort(tmp_path: Path, controle: Tokencontrole) -> tuple[TestClient, Opslag]
     return TestClient(poort, base_url="http://dossier-mcp:8000"), opslag
 
 
-def _bewijs_met_jwk(t: str, **jwk: Any) -> str:
+def _bewijs_met_jwk(t: str, iat: Any = None, **jwk: Any) -> str:
     claims = {
         "htm": "POST",
         "htu": INST.resource_url,
-        "iat": int(time.time()),
+        "iat": int(time.time()) if iat is None else iat,
         "jti": str(uuid.uuid4()),
         "ath": token_hash(t),
     }
@@ -291,9 +291,25 @@ def test_misvormde_dpop_sleutel_geeft_geweigerde_aanroep_met_audit(
     assert record["medewerker"] == "sub-sanne"
 
 
+@pytest.mark.parametrize("iat", [10**400, -(10**400), True, 1.5e9, float("inf"), "nu"])
+def test_dpop_iat_buiten_bereik_geeft_geweigerde_aanroep_met_audit(
+    controle: Tokencontrole, tmp_path: Path, iat: Any
+) -> None:
+    client, opslag = _poort(tmp_path, controle)
+    t = token()
+    antwoord = _mcp(client, t, _bewijs_met_jwk(t, iat=iat))
+    assert antwoord.status_code == 401, antwoord.text
+    assert 'error="invalid_dpop_proof"' in antwoord.headers["www-authenticate"]
+    record = opslag.auditlog()[-1]
+    assert (record["beslissing"], record["medewerker"]) == ("geweigerd", "sub-sanne")
+
+
 @pytest.mark.parametrize(
     ("anders", "medewerker"),
     [
+        ({"exp": 10**400}, "sub-sanne"),
+        ({"iat": -(10**400)}, "sub-sanne"),
+        ({"nbf": -1}, "sub-sanne"),
         ({"iat": str(int(time.time()))}, "sub-sanne"),
         ({"exp": str(int(time.time()) + 60)}, "sub-sanne"),
         ({"iat": True}, "sub-sanne"),

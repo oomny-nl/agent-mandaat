@@ -21,6 +21,8 @@ from mandaat.config import Instellingen
 from mandaat.dpop import DPoPFout, GevalideerdBewijs, valideer_bewijs
 
 TOEGELATEN_AGENTS = frozenset({"dossierassistent"})
+# Grootste geheel getal dat exact in een JSON-double past (RFC 7159 §6).
+MAX_TIJDCLAIM = 2**53
 
 
 def actor(claims: dict[str, Any]) -> str | None:
@@ -86,7 +88,8 @@ def _controleer_claimtypen(claims: dict[str, Any]) -> None:
 
     Raises:
         TokenFout: Als `sub`, `jti` of `iss` geen niet-lege tekst is (dan zonder claims, want de
-            audit kan ze niet vastleggen) of een tijdclaim geen getal (RFC 7519 §2, NumericDate).
+            audit kan ze niet vastleggen) of een tijdclaim geen getal tussen 0 en 2**53 is
+            (RFC 7519 §2, NumericDate; daarbuiten past de waarde niet in SQLite of een double).
     """
     for naam in ("sub", "jti", "iss"):
         if not isinstance(claims.get(naam), str) or not claims[naam]:
@@ -95,6 +98,8 @@ def _controleer_claimtypen(claims: dict[str, Any]) -> None:
         waarde = claims.get(naam, 0)
         if isinstance(waarde, bool) or not isinstance(waarde, int | float):
             raise TokenFout(f"token ongeldig: {naam} is geen getal", claims=claims)
+        if not 0 <= waarde <= MAX_TIJDCLAIM:
+            raise TokenFout(f"token ongeldig: {naam} valt buiten het bereik", claims=claims)
 
 
 class Tokencontrole:
