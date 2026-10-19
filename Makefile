@@ -37,8 +37,10 @@ lint:
 
 check: lint test integratie
 
+## down: stop de keten en wis de volumes, ook zonder .env (down gebruikt het wachtwoord niet)
 down:
-	$(COMPOSE) down -v --remove-orphans
+	KC_BOOTSTRAP_ADMIN_PASSWORD=$${KC_BOOTSTRAP_ADMIN_PASSWORD:-ongebruikt} \
+		$(COMPOSE) down -v --remove-orphans
 
 ## opname: neem de demo op met VHS (demo/demo.tape)
 opname: .env
