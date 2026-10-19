@@ -195,12 +195,14 @@ caseworker's token for the blueprint is not included.
 On 19 October 2026 the variant was deployed to a separate lab tenant with its own subscription,
 measured there and removed again with `terraform destroy`. The results:
 
-- `terraform apply` created the 15 resources in 44 seconds, without retries. A plan right after
-  was empty.
+- `terraform apply` created the 15 resources in a single run without errors, in 44 seconds. A plan
+  right after was empty.
 - In Azure Container Instances, with the managed identity as the only credential,
   [`entra.py`](src/mandaat/entra.py) completed all three steps. The token for the case API carried
   the agent in `azp`, the caseworker in `oid`, `idtyp` `user`, facet 11 (agent identity) in
   `xms_act_fct` and only the requested scope in `scp`. `normaliseer_entra` accepted it.
+- Two scopes in one request gave a token with both; `/.default` gave all granted scopes. The token
+  therefore only stays narrow if the agent asks for one scope per action.
 - The facet claims and `idtyp` are optional claims. Without `optionalClaims` on the case API they
   were missing, and `normaliseer_entra` refused the token because it could not be told apart from
   a plain user token. The Terraform therefore requests them.
@@ -231,7 +233,7 @@ without that role was not tried. West Europe refused a managed identity for the 
 | Agent credential | `private_key_jwt`, key kept out of git | Managed identity as federated identity credential of the blueprint |
 | Consent | Caseworker consent screen per session (`delegation:client`) | Admin consent (`oauth2PermissionGrant`) on the agent identity |
 | Delegation in the token | `act` (RFC 8693) | `azp` (agent), `oid` (caseworker), facet claims `xms_act_fct` and `xms_sub_fct` as optional claims |
-| Narrow rights per action | `scope` parameter on the exchange | One delegated scope per OBO request; without consent `AADSTS65001` |
+| Narrow rights per action | `scope` parameter on the exchange | The agent asks for one scope per OBO request (`/.default` gives all); without consent `AADSTS65001` |
 | Sender-constrained | DPoP | Not in this variant |
 | Kill switch | Disable the client | Disable (`AADSTS7000112`) or delete the agent identity |
 | Status | Preview features (delegation, parameterized scopes), measured here | Graph v1.0 endpoints, deployed to a lab tenant and measured on 19 October 2026 |
