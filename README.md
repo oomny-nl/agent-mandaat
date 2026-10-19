@@ -22,8 +22,9 @@ met een Entra Agent ID-variant in Terraform.
 ![Demo-opname: toegestaan, buiten mandaat geweigerd, ingetrokken en noodstop](docs/beeld/demo.gif)
 
 Achter deze repo zit bijna acht jaar identitywerk voor de vier grote gemeenten: federatie,
-SCIM-provisioning en de inrichting van Keycloak. Michael Owen Meijer ([Oomny B.V.](https://www.oomny.nl))
-trekt dat werk in [drie demo's](https://github.com/oomny-nl) door naar AI-agents.
+SCIM-provisioning en de inrichting van Keycloak (cutover in voorbereiding). Michael Owen Meijer
+([Oomny B.V.](https://www.oomny.nl)) trekt dat werk in [drie demo's](https://github.com/oomny-nl)
+door naar AI-agents.
 
 ## Het scenario
 

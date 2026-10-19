@@ -22,9 +22,9 @@ DPoP) on Keycloak, with a Microsoft Entra Agent ID variant in Terraform.
 ![Demo recording: allowed, refused outside the mandate, revoked and kill switch](docs/beeld/demo.gif)
 
 Behind this repository are nearly eight years of identity work for the four largest Dutch
-municipalities: federation, SCIM provisioning and setting up Keycloak. Michael Owen Meijer
-([Oomny B.V.](https://www.oomny.nl)) extends that work to AI agents in
-[three demos](https://github.com/oomny-nl).
+municipalities: federation, SCIM provisioning and setting up Keycloak (cutover in preparation).
+Michael Owen Meijer ([Oomny B.V.](https://www.oomny.nl)) extends that work to AI agents in [three
+demos](https://github.com/oomny-nl).
 
 ## The scenario
 
