@@ -225,16 +225,17 @@ zonder sleutels draaien en de aanval reproduceerbaar is. De beveiliging hangt ne
 
 ## 6. Entra-variant (buiten het kritieke demopad)
 
-Aparte map `entra/`, gelabeld "implementatie met gemockte tests, niet tegen een tenant gevalideerd".
-Tokenprovider voor de agent-OBO-flow van Entra Agent ID in drie stappen (managed identity-token,
-blueprint-token T1 via `fmi_path` met dat token als `client_assertion`, daarna `jwt-bearer` met
-`requested_token_use=on_behalf_of`). Terraform met `microsoft/msgraph` op de Graph v1.0-endpoints
-(dossier-API met scope, blueprint met `identifierUris` en scope `access_agent`, de managed identity als
+Aparte map `entra/`. Op 19-10-2026 eenmalig uitgerold in een lab-tenant, end-to-end gemeten en weer
+opgeruimd; de uitkomst staat in de README. Tokenprovider voor de agent-OBO-flow van Entra Agent ID
+in drie stappen (managed identity-token, blueprint-token T1 via `fmi_path` met dat token als
+`client_assertion`, daarna `jwt-bearer` met `requested_token_use=on_behalf_of`). Terraform met
+`microsoft/msgraph` op de Graph v1.0-endpoints (dossier-API met scopes en de facetclaims als
+optionele claims, blueprint met `identifierUris` en scope `access_agent`, de managed identity als
 federated identity credential, blueprint-principal, agent identity, toestemming) en `azure/azapi`
 (resourcegroep, managed identity). De werkplek-client die het gebruikerstoken voor de blueprint
-aanvraagt, valt buiten deze Terraform. Claimvalidatie per provider: in Entra staat de delegatie niet in
-`act`. CI: `terraform fmt`, `validate`, unit-tests met gemockte responses. Vergelijkingstabel Keycloak
-en Entra in de README.
+aanvraagt, valt buiten deze Terraform. Claimvalidatie per provider: in Entra staat de delegatie niet
+in `act`. CI: `terraform fmt`, `validate`, unit-tests met gemockte responses. Vergelijkingstabel
+Keycloak en Entra in de README.
 
 ## 7. Dreigingsmodel
 

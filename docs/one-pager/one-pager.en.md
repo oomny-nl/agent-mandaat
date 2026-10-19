@@ -47,7 +47,7 @@ Applications 2026 and the OWASP Non-Human Identities Top 10, with the status and
 risk. An honest section on what this does not solve.
 
 Keycloak 26.8 (open source) and Microsoft Entra Agent ID side by side, with Terraform for Entra
-(checked with terraform validate and mocked tests, not deployed to a tenant).
+(deployed to a lab tenant and measured end to end on 19 October 2026).
 
 ## Why me
 

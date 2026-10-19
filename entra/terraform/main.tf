@@ -1,6 +1,8 @@
 # Entra Agent ID-variant van de dossierassistent.
 #
-# Niet tegen een tenant gevalideerd: CI draait alleen `terraform fmt -check` en `terraform validate`.
+# CI draait `terraform fmt -check` en `terraform validate`. Op 19-10-2026 eenmalig uitgerold in een
+# lab-tenant, end-to-end gemeten en met `terraform destroy` opgeruimd; route, rechten en uitkomst
+# staan in de README onder "Keycloak en Entra naast elkaar".
 # Graph-endpoints volgen learn.microsoft.com/entra/agent-id en de Graph v1.0-referentie
 # (geraadpleegd 18-10-2026).
 #
@@ -56,9 +58,24 @@ resource "msgraph_resource" "dossier_api" {
         }
       ]
     }
+    # Zonder deze optionele claims zet Entra geen facetclaims in het token van de agent, en kan de
+    # API een agenttoken niet van een gewoon gebruikerstoken onderscheiden.
+    optionalClaims = {
+      accessToken = [
+        { name = "xms_act_fct" },
+        { name = "xms_sub_fct" },
+        { name = "idtyp", additionalProperties = ["include_user_token"] },
+      ]
+    }
   }
   response_export_values = {
     app_id = "appId"
+  }
+  # Graph bewaart de scopes in omgekeerde volgorde en houdt die vast, ook na een PATCH (gemeten
+  # 19-10-2026). Zonder deze regel toont elk plan een wijziging. Scopes aanpassen kan daarom
+  # alleen met `terraform apply -replace=msgraph_resource.dossier_api`.
+  lifecycle {
+    ignore_changes = [body.api.oauth2PermissionScopes]
   }
 }
 
@@ -137,9 +154,6 @@ resource "msgraph_resource" "agent" {
     displayName              = "Dossierassistent ${var.naam}"
     agentIdentityBlueprintId = msgraph_resource.blueprint.output.app_id
     "sponsors@odata.bind"    = ["${local.graph}/users/${var.sponsor_object_id}"]
-  }
-  response_export_values = {
-    app_id = "appId"
   }
   depends_on = [msgraph_resource.blueprint_principal]
 }
