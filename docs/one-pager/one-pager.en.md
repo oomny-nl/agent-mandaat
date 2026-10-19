@@ -9,7 +9,7 @@ lang: en
 
 **Delegated access, revocation and audit for an AI agent in government.**
 
-Michael Owen Meijer, Oomny B.V. · identity architect and AI engineer for government and cloud
+Michael Owen Meijer, Oomny B.V. · senior identity architect and AI engineer for government and cloud
 
 ## The problem
 
@@ -43,8 +43,8 @@ simulates an agent that follows an instruction injected into a case file, and th
 for a decision, and the API refuses the case outside the mandate.
 
 55 integration tests against the real stack. A threat model against the OWASP Top 10 for Agentic
-Applications 2026 and the OWASP Non-Human Identities Top 10, with the test behind each control.
-An honest section on what this does not solve.
+Applications 2026 and the OWASP Non-Human Identities Top 10, with the status and tests for each
+risk. An honest section on what this does not solve.
 
 Keycloak 26.8 (open source) and Microsoft Entra Agent ID side by side, with Terraform for Entra
 (checked with terraform validate and mocked tests, not deployed to a tenant).
@@ -52,8 +52,9 @@ Keycloak 26.8 (open source) and Microsoft Entra Agent ID side by side, with Terr
 ## Why me
 
 Identity and security since 2011, nearly eight years for the four largest Dutch municipalities:
-federation, Keycloak, Entra ID, and the move from personal access tokens to managed identities.
-Since 2026 I have been building AI agents with tool calling and MCP. That intersection is exactly where public
-organisations are now: admitting agents without losing control over access.
+federation, Entra ID, setting up Keycloak (cutover in preparation) and the move from personal access
+tokens to managed identities. Since 2026 I have been building AI agents with tool calling and MCP.
+That intersection is exactly where public organisations are now: admitting agents without losing
+control over access.
 
 **Repo:** github.com/oomny-nl/agent-mandaat · **Site:** www.oomny.nl · **Mail:** michael@oomny.nl
