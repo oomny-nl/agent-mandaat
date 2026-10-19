@@ -31,9 +31,9 @@ test:
 
 ## lint: ruff, opmaak en typecontrole
 lint:
-	uv run ruff check .
-	uv run ruff format --check .
-	uv run ty check src tests
+	uv run --all-extras ruff check .
+	uv run --all-extras ruff format --check .
+	uv run --all-extras ty check src tests
 
 check: lint test integratie
 
