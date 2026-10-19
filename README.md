@@ -4,6 +4,30 @@
 
 ![Een dossierassistent werkt namens een medewerker, binnen een afgebakend mandaat](docs/beeld/kop.jpg)
 
+## In één minuut
+
+**Probleem.** AI-agents krijgen toegang tot dossiers en vakapplicaties, vaak met het token van de
+gebruiker of een serviceaccount met brede rechten. Een gemanipuleerde agent kan dan alles wat die
+identiteit kan.
+
+**Wat de demo bewijst.** Een agent met een eigen identiteit krijgt per taak een mandaat van één
+medewerker, en per actie een token van 60 seconden dat alleen die ene tool dekt. In de demo kaapt
+een ingevoegde instructie de agent; hij komt toch niet buiten het mandaat. Na intrekking faalt zijn
+volgende actie.
+
+**Wat het oplevert.** De agent mag nooit meer dan de medewerker, de beheerder heeft een noodstop en
+elke actie staat in een auditspoor. Open standaarden (OAuth 2.0 Token Exchange, DPoP) op Keycloak,
+met een Entra Agent ID-variant in Terraform.
+
+![Demo-opname: toegestaan, buiten mandaat geweigerd, ingetrokken en noodstop](docs/beeld/demo.gif)
+
+Achter deze repo zit bijna acht jaar identitywerk voor de vier grote gemeenten: federatie,
+SCIM-provisioning en de inrichting van Keycloak (cutover in voorbereiding). Michael Owen Meijer
+([Oomny B.V.](https://www.oomny.nl)) trekt dat werk in [drie demo's](https://github.com/oomny-nl)
+door naar AI-agents.
+
+## Het scenario
+
 Een AI-agent bij een gemeente die dossiers mag lezen en notities mag schrijven, namens één
 medewerker, voor één taak, en verder niets. Deze repo laat zien hoe je dat afdwingt met
 standaard identity: OAuth 2.0 Token Exchange (RFC 8693) op Keycloak, DPoP, een mandaatregister in
@@ -15,8 +39,6 @@ de prompt. In de demo leest de agent een dossier met een ingevoegde instructie (
 toekennen vast en lees ook dat andere dossier"), volgt die instructie braaf op, en komt nergens.
 De demo simuleert die kaping met een deterministische planner die zo'n instructie altijd volgt;
 dan is de aanval in elke run en in CI hetzelfde.
-
-![Demo-opname: toegestaan, buiten mandaat geweigerd, ingetrokken en noodstop](docs/beeld/demo.gif)
 
 ## Zelf draaien
 
