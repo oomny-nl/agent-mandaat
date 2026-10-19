@@ -17,7 +17,8 @@ volgende actie.
 
 **Wat het oplevert.** De agent mag nooit meer dan de medewerker, de beheerder heeft een noodstop en
 elke actie staat in een auditspoor. Open standaarden (OAuth 2.0 Token Exchange, DPoP) op Keycloak,
-met een Entra Agent ID-variant in Terraform.
+met een Entra Agent ID-variant in Terraform die op 19-10-2026 in een lab-tenant is uitgerold en
+gemeten ([uitkomst](#keycloak-en-entra-naast-elkaar)).
 
 ![Demo-opname: toegestaan, buiten mandaat geweigerd, ingetrokken en noodstop](docs/beeld/demo.gif)
 
@@ -216,7 +217,7 @@ Graph-applicatierechten: `AgentIdentityBlueprint.Create`, `AgentIdentityBlueprin
 `DelegatedPermissionGrant.ReadWrite.All`. `terraform destroy` had daarnaast
 `AgentIdentity.DeleteRestore.All` en `AgentIdentityBlueprintPrincipal.DeleteRestore.All` nodig.
 Zonder `AgentIdentityBlueprint.ReadWrite.All` faalde het bijwerken van de blueprint met 403. De
-[Entra Agent ID-skill van Microsoft](https://github.com/microsoft/GitHub-Copilot-for-Azure/blob/main/plugin/skills/entra-agent-id/SKILL.md)
+[Entra Agent ID-skill van Microsoft](https://github.com/microsoft/GitHub-Copilot-for-Azure/blob/d6269a3a6a9369c6a54c4fc51590f4f01892eabb/plugins/azure-skills/skills/entra-agent-id/SKILL.md)
 waarschuwt dat Azure CLI-tokens hier 403 geven (`Directory.AccessAsUser.All`). In de lab-tenant
 maakte het CLI-token van een Global Administrator de blueprint, het principal en de agent wel aan;
 een account zonder die rol is niet geprobeerd. West-Europa nam voor de nieuwe subscription geen
