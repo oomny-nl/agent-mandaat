@@ -299,7 +299,7 @@ gepind: `uv.lock`, alle images van buiten op digest, GitHub Actions op commit.
 
 ## Over
 
-Gebouwd door Michael Owen Meijer ([Oomny B.V.](https://www.oomny.nl)), identity-architect en
+Gebouwd door Michael Owen Meijer ([Oomny B.V.](https://www.oomny.nl)), senior identity-architect en
 AI-engineer voor overheid en cloud. Alle namen, dossiers en bedragen in deze repo zijn verzonnen.
 
 Licentie: [EUPL-1.2](LICENSE).

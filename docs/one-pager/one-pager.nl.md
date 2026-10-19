@@ -9,7 +9,7 @@ lang: nl
 
 **Gedelegeerde toegang, intrekking en audit voor een AI-agent bij de overheid.**
 
-Michael Owen Meijer, Oomny B.V. · identity-architect en AI-engineer voor overheid en cloud
+Michael Owen Meijer, Oomny B.V. · senior identity-architect en AI-engineer voor overheid en cloud
 
 ## Het probleem
 
@@ -43,17 +43,17 @@ demo een agent die een ingevoegde instructie uit een dossier volgt, en de grens 
 voor een besluit, en de API weigert het dossier buiten het mandaat.
 
 55 integratietests tegen de echte keten. Een dreigingsmodel tegen de OWASP Top 10 for Agentic
-Applications 2026 en de OWASP Non-Human Identities Top 10, met per risico de test die het bewijst.
-Een eerlijke paragraaf over wat dit niet oplost.
+Applications 2026 en de OWASP Non-Human Identities Top 10, met per risico de status en de tests. Een
+eerlijke paragraaf over wat dit niet oplost.
 
 Keycloak 26.8 (open source) en Microsoft Entra Agent ID naast elkaar, met Terraform voor de
 Entra-kant (op 19-10-2026 in een lab-tenant uitgerold en end-to-end gemeten).
 
 ## Waarom van mij
 
-Identity en security sinds 2011, bijna acht jaar voor de vier grote gemeenten: federatie,
-Keycloak, Entra ID, en de overstap van persoonlijke tokens naar managed identities. Sinds 2026
-bouw ik AI-agents met tool calling en MCP. Het snijvlak is precies waar overheden nu staan:
-agents toelaten zonder de controle over toegang kwijt te raken.
+Identity en security sinds 2011, bijna acht jaar voor de vier grote gemeenten: federatie, Entra ID,
+de inrichting van Keycloak (cutover in voorbereiding) en de overstap van persoonlijke tokens naar
+managed identities. Sinds 2026 bouw ik AI-agents met tool calling en MCP. Het snijvlak is precies
+waar overheden nu staan: agents toelaten zonder de controle over toegang kwijt te raken.
 
 **Repo:** github.com/oomny-nl/agent-mandaat · **Site:** www.oomny.nl · **Mail:** michael@oomny.nl
