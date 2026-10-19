@@ -190,19 +190,53 @@ The Keycloak variant runs fully in this repo. The Entra variant in [`entra/`](en
 Terraform and the token provider for the agent on-behalf-of flow of Microsoft Entra Agent ID. The
 Terraform creates the case API, the blueprint with scope `access_agent`, the managed identity as
 credential, the agent identity and the admin consent. The workplace client that requests the
-caseworker's token for the blueprint is not included. The variant is tested against mocked Entra
-responses and `terraform validate`, not against a real tenant.
+caseworker's token for the blueprint is not included.
+
+On 19 October 2026 the variant was deployed to a separate lab tenant with its own subscription,
+measured there and removed again with `terraform destroy`. The results:
+
+- `terraform apply` created the 15 resources in a single run without errors, in 44 seconds. A plan
+  right after was empty.
+- In Azure Container Instances, with the managed identity as the only credential,
+  [`entra.py`](src/mandaat/entra.py) completed all three steps. The token for the case API carried
+  the agent in `azp`, the caseworker in `oid`, `idtyp` `user`, facet 11 (agent identity) in
+  `xms_act_fct` and only the requested scope in `scp`. `normaliseer_entra` accepted it.
+- Two scopes in one request gave a token with both; `/.default` gave all granted scopes. The token
+  therefore only stays narrow if the agent asks for one scope per action.
+- The facet claims and `idtyp` are optional claims. Without `optionalClaims` on the case API they
+  were missing, and `normaliseer_entra` refused the token because it could not be told apart from
+  a plain user token. The Terraform therefore requests them.
+- A scope without consent (`besluit.nemen`) returned `AADSTS65001`. `normaliseer_entra` refused an
+  app-only token of the agent, issued without a caseworker.
+- After the agent identity was disabled, every token request by the agent returned
+  `AADSTS7000112`. The blueprint token from step 2 was still issued.
+- In the measurement the workplace was a separate app registration with a delegated grant for
+  `access_agent` on the blueprint principal.
+
+The deployment used a dedicated app registration that signs in with a certificate (client
+credentials, through the providers' `ARM_*` variables), with Contributor on the subscription and
+these Graph application permissions: `AgentIdentityBlueprint.Create`,
+`AgentIdentityBlueprint.ReadWrite.All`, `AgentIdentityBlueprintPrincipal.Create`,
+`AgentIdentity.Create.All`, `Application.ReadWrite.All` and
+`DelegatedPermissionGrant.ReadWrite.All`. `terraform destroy` also needed
+`AgentIdentity.DeleteRestore.All` and `AgentIdentityBlueprintPrincipal.DeleteRestore.All`. Without
+`AgentIdentityBlueprint.ReadWrite.All` updating the blueprint failed with 403.
+[Microsoft's Entra Agent ID skill](https://github.com/microsoft/GitHub-Copilot-for-Azure/blob/main/plugin/skills/entra-agent-id/SKILL.md)
+warns that Azure CLI tokens get a 403 here (`Directory.AccessAsUser.All`). In the lab tenant the CLI
+token of a Global Administrator did create the blueprint, the principal and the agent; an account
+without that role was not tried. West Europe refused a managed identity for the new subscription
+("not accepting new customers"), so the measurement ran with `locatie = "northeurope"`.
 
 | | Keycloak 26.8.1 | Entra Agent ID |
 |---|---|---|
 | Agent identity | Confidential client with a service account | Agent identity from a blueprint, with a sponsor |
 | Agent credential | `private_key_jwt`, key kept out of git | Managed identity as federated identity credential of the blueprint |
 | Consent | Caseworker consent screen per session (`delegation:client`) | Admin consent (`oauth2PermissionGrant`) on the agent identity |
-| Delegation in the token | `act` (RFC 8693) | `azp` (agent), `oid` (caseworker), facet claims `xms_act_fct` and `xms_sub_fct` |
-| Narrow rights per action | `scope` parameter on the exchange | One delegated scope per OBO request |
+| Delegation in the token | `act` (RFC 8693) | `azp` (agent), `oid` (caseworker), facet claims `xms_act_fct` and `xms_sub_fct` as optional claims |
+| Narrow rights per action | `scope` parameter on the exchange | The agent asks for one scope per OBO request (`/.default` gives all); without consent `AADSTS65001` |
 | Sender-constrained | DPoP | Not in this variant |
-| Kill switch | Disable the client | Disable or delete the agent identity |
-| Status | Preview features (delegation, parameterized scopes), measured here | Graph v1.0 endpoints, not deployed to a tenant |
+| Kill switch | Disable the client | Disable (`AADSTS7000112`) or delete the agent identity |
+| Status | Preview features (delegation, parameterized scopes), measured here | Graph v1.0 endpoints, deployed to a lab tenant and measured on 19 October 2026 |
 
 ## Choices and deviations
 

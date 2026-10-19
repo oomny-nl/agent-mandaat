@@ -186,19 +186,53 @@ De Keycloak-variant draait volledig in deze repo. De Entra-variant in [`entra/`]
 Terraform en de tokenprovider voor de agent-OBO-flow van Microsoft Entra Agent ID. De Terraform
 maakt de dossier-API, de blueprint met scope `access_agent`, de managed identity als credential,
 de agent identity en de beheerdersconsent. De client van de werkplek, die het token van de
-medewerker voor de blueprint aanvraagt, valt erbuiten. Getest is de variant met nagebootste
-Entra-antwoorden en `terraform validate`, niet tegen een echte tenant.
+medewerker voor de blueprint aanvraagt, valt erbuiten.
+
+Op 19-10-2026 is de variant uitgerold in een aparte lab-tenant met een eigen subscription, daar
+gemeten en met `terraform destroy` weer opgeruimd. Dit kwam eruit:
+
+- `terraform apply` maakte de 15 resources in één run zonder fouten aan, in 44 seconden. Een plan
+  direct daarna was leeg.
+- In Azure Container Instances, met de managed identity als enige credential, doorliep
+  [`entra.py`](src/mandaat/entra.py) de drie stappen. Het token voor de dossier-API had de agent in
+  `azp`, de medewerker in `oid`, `idtyp` `user`, facet 11 (agent identity) in `xms_act_fct` en
+  alleen de gevraagde scope in `scp`. `normaliseer_entra` nam het aan.
+- Twee scopes in één verzoek gaven een token met beide; `/.default` gaf alle toegekende scopes.
+  Het token blijft dus alleen smal als de agent per actie één scope vraagt.
+- De facetclaims en `idtyp` zijn optionele claims. Zonder `optionalClaims` op de dossier-API
+  ontbraken ze en weigerde `normaliseer_entra` het token, omdat het niet van een gewoon
+  gebruikerstoken te onderscheiden was. De Terraform vraagt ze daarom aan.
+- Een scope zonder consent (`besluit.nemen`) gaf `AADSTS65001`. Een app-only token van de agent,
+  zonder medewerker, weigerde `normaliseer_entra`.
+- Na het uitschakelen van de agent identity gaf elke tokenaanvraag van de agent `AADSTS7000112`.
+  Het blueprint-token uit stap 2 kwam nog wel.
+- De werkplek was in de meting een losse app-registratie met een gedelegeerde grant voor
+  `access_agent` op het blueprint-principal.
+
+De uitrol liep via een eigen app-registratie die met een certificaat inlogt (client credentials, via
+de `ARM_*`-variabelen van de providers), met Contributor op de subscription en deze
+Graph-applicatierechten: `AgentIdentityBlueprint.Create`, `AgentIdentityBlueprint.ReadWrite.All`,
+`AgentIdentityBlueprintPrincipal.Create`, `AgentIdentity.Create.All`, `Application.ReadWrite.All` en
+`DelegatedPermissionGrant.ReadWrite.All`. `terraform destroy` had daarnaast
+`AgentIdentity.DeleteRestore.All` en `AgentIdentityBlueprintPrincipal.DeleteRestore.All` nodig.
+Zonder `AgentIdentityBlueprint.ReadWrite.All` faalde het bijwerken van de blueprint met 403. De
+[Entra Agent ID-skill van Microsoft](https://github.com/microsoft/GitHub-Copilot-for-Azure/blob/main/plugin/skills/entra-agent-id/SKILL.md)
+waarschuwt dat Azure CLI-tokens hier 403 geven (`Directory.AccessAsUser.All`). In de lab-tenant
+maakte het CLI-token van een Global Administrator de blueprint, het principal en de agent wel aan;
+een account zonder die rol is niet geprobeerd. West-Europa nam voor de nieuwe subscription geen
+managed identity aan ("not accepting new customers"), dus de meting liep met
+`locatie = "northeurope"`.
 
 | | Keycloak 26.8.1 | Entra Agent ID |
 |---|---|---|
 | Identiteit van de agent | Confidential client met service account | Agent identity uit een blueprint, met sponsor |
 | Credential van de agent | `private_key_jwt`, sleutel buiten git | Managed identity als federated identity credential van de blueprint |
 | Toestemming | Consentscherm van de medewerker per sessie (`delegation:client`) | Beheerdersconsent (`oauth2PermissionGrant`) op de agent identity |
-| Delegatie in het token | `act` (RFC 8693) | `azp` (agent), `oid` (medewerker), facetclaims `xms_act_fct` en `xms_sub_fct` |
-| Smalle rechten per actie | `scope`-parameter bij de exchange | Eén gedelegeerde scope per OBO-verzoek |
+| Delegatie in het token | `act` (RFC 8693) | `azp` (agent), `oid` (medewerker), facetclaims `xms_act_fct` en `xms_sub_fct` als optionele claims |
+| Smalle rechten per actie | `scope`-parameter bij de exchange | De agent vraagt per OBO-verzoek één scope (`/.default` geeft alles); zonder consent `AADSTS65001` |
 | Sender-constrained | DPoP | Niet in deze variant |
-| Noodstop | Client uitschakelen | Agent identity uitschakelen of verwijderen |
-| Status | Preview-functies (delegatie, parameterized scopes), hier gemeten | Graph v1.0-endpoints, niet tegen een tenant uitgerold |
+| Noodstop | Client uitschakelen | Agent identity uitschakelen (`AADSTS7000112`) of verwijderen |
+| Status | Preview-functies (delegatie, parameterized scopes), hier gemeten | Graph v1.0-endpoints, op 19-10-2026 in een lab-tenant uitgerold en gemeten |
 
 ## Keuzes en afwijkingen
 
