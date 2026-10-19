@@ -17,7 +17,8 @@ next action fails.
 
 **What it delivers.** The agent never gets more rights than the caseworker, the administrator has
 a kill switch and every action is in an audit trail. Open standards (OAuth 2.0 Token Exchange,
-DPoP) on Keycloak, with a Microsoft Entra Agent ID variant in Terraform.
+DPoP) on Keycloak, with a Microsoft Entra Agent ID variant in Terraform that was deployed to a lab
+tenant and measured on 19 October 2026 ([results](#keycloak-and-entra-side-by-side)).
 
 ![Demo recording: allowed, refused outside the mandate, revoked and kill switch](docs/beeld/demo.gif)
 
@@ -221,7 +222,7 @@ these Graph application permissions: `AgentIdentityBlueprint.Create`,
 `DelegatedPermissionGrant.ReadWrite.All`. `terraform destroy` also needed
 `AgentIdentity.DeleteRestore.All` and `AgentIdentityBlueprintPrincipal.DeleteRestore.All`. Without
 `AgentIdentityBlueprint.ReadWrite.All` updating the blueprint failed with 403.
-[Microsoft's Entra Agent ID skill](https://github.com/microsoft/GitHub-Copilot-for-Azure/blob/main/plugin/skills/entra-agent-id/SKILL.md)
+[Microsoft's Entra Agent ID skill](https://github.com/microsoft/GitHub-Copilot-for-Azure/blob/d6269a3a6a9369c6a54c4fc51590f4f01892eabb/plugins/azure-skills/skills/entra-agent-id/SKILL.md)
 warns that Azure CLI tokens get a 403 here (`Directory.AccessAsUser.All`). In the lab tenant the CLI
 token of a Global Administrator did create the blueprint, the principal and the agent; an account
 without that role was not tried. West Europe refused a managed identity for the new subscription
