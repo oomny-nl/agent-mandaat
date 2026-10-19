@@ -55,7 +55,7 @@ gegarandeerd.
 | NHI3 Vulnerable Third-Party NHI | Geen externe NHI's | buiten scope | |
 | NHI4 Insecure Authentication | `private_key_jwt` (ES256); DPoP voor actortoken en gedelegeerd token; tokens zonder geldig bewijs worden geweigerd | bewezen | `test_exchange_zonder_dpop_bewijs_geweigerd` (i), `test_gestolen_token_zonder_dpop_sleutel` (i), `test_dpop.py` (u) |
 | NHI5 Overprivileged NHI | De agentclient heeft alleen `dossier:lezen` en `notitie:schrijven`, als default scope alleen `basic` (zonder bevoegdheid), geen rollen (`fullScopeAllowed` uit); per actie één scope | bewezen | `test_gedelegeerd_token_is_smal_kort_en_gebonden` (i) |
-| NHI6 Insecure Cloud Deployment Configurations | Entra-variant zonder geheim: managed identity als federated credential | gedeeltelijk: niet tegen een tenant uitgerold | `entra/terraform/main.tf`, `test_entra.py` (u) |
+| NHI6 Insecure Cloud Deployment Configurations | Entra-variant zonder geheim: managed identity als federated credential | gedeeltelijk: op 19-10-2026 in een lab-tenant uitgerold en gemeten, geen test tegen een tenant in CI | `entra/terraform/main.tf`, `test_entra.py` (u), README "Keycloak en Entra naast elkaar" |
 | NHI7 Long-Lived Secrets | Gedelegeerde tokens 60 s, eenmalig, zonder refresh token; actortoken kortlevend | gedeeltelijk: de client- en DPoP-sleutels van de agent hebben geen vervaldatum en roteren niet | `test_exchange_geeft_geen_refresh_token` (i), `test_token_eenmalig` (i) |
 | NHI8 Environment Isolation | Eén lokale omgeving | buiten scope | |
 | NHI9 NHI Reuse | Eén identiteit per agent; de resource heeft een eigen client; de agent hergebruikt nooit het token van de medewerker | bewezen | `test_subject_token_direct_op_tools` (i), `test_actortoken_direct_op_tools` (i) |

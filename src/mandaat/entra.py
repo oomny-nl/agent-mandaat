@@ -1,6 +1,7 @@
 """Entra Agent ID-variant: tokens voor de agent via de agent-OBO-flow, en claimnormalisatie.
 
-Implementatie met gemockte tests, niet tegen een tenant gevalideerd. Protocol volgens
+Unit-tests met gemockte responses; op 19-10-2026 end-to-end gemeten in een lab-tenant (zie de
+README, "Keycloak en Entra naast elkaar"). Protocol volgens
 learn.microsoft.com/entra/agent-id/agent-on-behalf-of-oauth-flow (geraadpleegd 17-10-2026):
 
 1. Managed identity-token met audience `api://AzureADTokenExchange` (geen geheim).

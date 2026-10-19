@@ -47,7 +47,7 @@ Applications 2026 en de OWASP Non-Human Identities Top 10, met per risico de tes
 Een eerlijke paragraaf over wat dit niet oplost.
 
 Keycloak 26.8 (open source) en Microsoft Entra Agent ID naast elkaar, met Terraform voor de
-Entra-kant (gecontroleerd met terraform validate en gemockte tests, niet in een tenant uitgerold).
+Entra-kant (op 19-10-2026 in een lab-tenant uitgerold en end-to-end gemeten).
 
 ## Waarom van mij
 

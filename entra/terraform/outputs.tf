@@ -10,7 +10,9 @@ output "blueprint_scope" {
 
 output "agent_identity_id" {
   description = "client_id van de agent identity (fmi_path in stap 2, client_id in stap 3)."
-  value       = msgraph_resource.agent.output.app_id
+  # Bij een agent identity is appId gelijk aan het object-id; Graph geeft appId niet terug bij het
+  # aanmaken.
+  value = msgraph_resource.agent.id
 }
 
 output "managed_identity_client_id" {
