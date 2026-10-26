@@ -552,6 +552,22 @@ def lees(pad: Path) -> list[dict[str, Any]]:
     return [json.loads(regel) for regel in pad.read_text().splitlines() if regel.strip()]
 
 
+def _stopfout(fout: BaseException) -> BudgetOp | MeetFout | None:
+    """De BudgetOp of MeetFout achter een afbreking, ook als de MCP-client hem in een
+    ExceptionGroup verpakte (een fout binnen `verbind`); anders None.
+
+    Een groep telt alleen als nette stop als ze uitsluitend zulke fouten bevat. Zit er ook een
+    andere fout of een onderbreking in, dan geeft dit None en gaat de hele groep door.
+    """
+    if isinstance(fout, (BudgetOp, MeetFout)):
+        return fout
+    if isinstance(fout, BaseExceptionGroup):
+        verwacht, rest = fout.split((BudgetOp, MeetFout))
+        if verwacht is not None and rest is None:
+            return _stopfout(verwacht.exceptions[0])
+    return None
+
+
 async def meet(meting: Meting, pad: Path, maximum: int | None) -> str:
     """Draai de runs die nog geen tellende poging hebben, tot het maximum of de grens.
 
@@ -574,8 +590,9 @@ async def meet(meting: Meting, pad: Path, maximum: int | None) -> str:
                 afgebroken = {**_record(run, deel), "reden": repr(fout)}
                 uitvoer.write(json.dumps(afgebroken, ensure_ascii=False) + "\n")
                 uitvoer.flush()
-                if isinstance(fout, (BudgetOp, MeetFout)):
-                    return f"gestopt bij {run.sleutel}: {fout}"
+                stop = _stopfout(fout)
+                if stop is not None:
+                    return f"gestopt bij {run.sleutel}: {stop}"
                 raise
             uitvoer.write(json.dumps(record, ensure_ascii=False) + "\n")
             uitvoer.flush()

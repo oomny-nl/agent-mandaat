@@ -323,6 +323,33 @@ def test_afgebroken_run_na_een_modelantwoord_wordt_niet_vervangen(tmp_path: Path
     assert onbekend(regel)
 
 
+def test_verpakte_meetfout_stopt_de_meting_netjes(tmp_path: Path) -> None:
+    """Gemeten 26-10-2026: een verbindingsfout binnen de MCP-client kwam als ExceptionGroup."""
+    pad = tmp_path / "runs.jsonl"
+    fout = ExceptionGroup("taskgroup", [ExceptionGroup("taskgroup", [MeetFout("verbinding")])])
+    nep = _NepMeting(Budget("gpt-5-mini"), fout_bij="B-00-1", fout=fout, antwoorden=5)
+    assert "gestopt bij B-00-1: verbinding" in _meet(nep, pad, 3)
+    regel = json.loads(pad.read_text().splitlines()[-1])
+    assert (regel["status"], regel["modelaanroepen"]) == ("afgebroken", 5)
+
+
+def test_verpakte_budgetgrens_stopt_de_meting_netjes(tmp_path: Path) -> None:
+    fout = ExceptionGroup("taskgroup", [BudgetOp("grens")])
+    nep = _NepMeting(Budget("gpt-5-mini"), fout_bij="B-00-1", fout=fout, antwoorden=1)
+    assert "gestopt bij B-00-1: grens" in _meet(nep, tmp_path / "runs.jsonl", 3)
+
+
+def test_gemengde_groep_laat_de_onverwachte_fout_door(tmp_path: Path) -> None:
+    """Een MeetFout naast een andere fout mag die andere fout niet verbergen."""
+    pad = tmp_path / "runs.jsonl"
+    fout = ExceptionGroup("taskgroup", [MeetFout("verbinding"), ValueError("onverwacht")])
+    nep = _NepMeting(Budget("gpt-5-mini"), fout_bij="B-00-1", fout=fout, antwoorden=1)
+    with pytest.raises(ExceptionGroup) as gevangen:
+        _meet(nep, pad, 3)
+    assert gevangen.value.subgroup(ValueError) is not None
+    assert json.loads(pad.read_text().splitlines()[-1])["status"] == "afgebroken"
+
+
 def test_onverwachte_fout_legt_de_run_vast_en_gaat_door(tmp_path: Path) -> None:
     pad = tmp_path / "runs.jsonl"
     with pytest.raises(KeyboardInterrupt):
