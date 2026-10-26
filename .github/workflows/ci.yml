@@ -38,7 +38,7 @@ jobs:
         run: docker compose up -d --build --wait
       - name: Integratietests
         run: docker compose run --rm tests
-      - name: Demo (drie scenario's en de bewijstabel)
+      - name: Demo (vier scenario's en de bewijstabel)
         run: docker compose run --rm demo
       - name: Logs bij falen
         if: failure()

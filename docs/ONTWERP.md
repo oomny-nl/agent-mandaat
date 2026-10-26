@@ -110,6 +110,14 @@ Gevolgen voor het ontwerp:
    functioneel beheerder: onder een nieuw mandaat ligt een geldig token klaar, de beheerder schakelt
    de agentclient uit, de API weigert dat token (introspectie: inactief) en een nieuwe exchange faalt
    (`invalid_client`). De demo toont tijdstempels en sluit af met de bewijstabel uit het auditlog.
+4. Vergissing in de delegatie (toegevoegd 26-10-2026). Twee aanvragers P. Mulder in Sannes caseload.
+   Sanne verleent het mandaat voor 2026-0162 terwijl ze 2026-0161 bedoelt; de opdracht noemt geen
+   nummer. a. De doorzetter leest 2026-0162 en schrijft de gevraagde notitie: toegestaan door
+   Keycloak en API, inhoudelijk fout. b. De vrager ziet dat het inkomensbewijs in 2026-0162 al
+   aanwezig is, vraagt Sanne via de lokale tool `vraag_medewerker` (geen MCP-tool, geen token) en
+   schrijft niets; Sanne trekt in, verleent 2026-0161 en de vrager zet daar de notitie. Met
+   `PLANNER=llm` speelt hetzelfde model beide rollen, zonder en met vraag-tool. De meting bij dit
+   scenario staat in `docs/meting/`.
 
 ## 5. Architectuur
 
@@ -247,7 +255,7 @@ audience, vervalst token, hergebruik na intrekking, introspectie onbereikbaar.
 ## 8. Wat dit niet oplost
 
 - Binnen zijn mandaat kan het model onjuiste inhoud schrijven. Identity begrenst wat een agent kan,
-  niet of het klopt.
+  niet of het klopt. Scenario 4 laat dat zien met een vergissing van de mens bij het delegeren.
 - Intrekking via het mandaatregister werkt bij de volgende actie, niet terugwerkend: een al
   toegelaten actie voltooit, een al geschreven notitie blijft staan. Alleen intrekken in Keycloak
   (zonder register) stopt nieuwe exchanges maar niet al uitgegeven tokens: die blijven tot verloop

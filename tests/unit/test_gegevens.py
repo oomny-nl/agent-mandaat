@@ -13,6 +13,8 @@ from mandaat.server.gegevens import mag_zelf
         ("sanne", "dossier:lezen", "2026-0142", None),
         ("sanne", "notitie:schrijven", "2026-0143", None),
         ("sanne", "besluit:nemen", "2026-0142", None),
+        ("sanne", "notitie:schrijven", "2026-0161", None),
+        ("sanne", "notitie:schrijven", "2026-0162", None),
         ("sanne", "dossier:lezen", "2026-0201", "dossier_niet_in_caseload_medewerker"),
         ("bram", "dossier:lezen", "2026-0142", None),
         ("bram", "notitie:schrijven", "2026-0142", "medewerker_mag_dit_zelf_niet"),

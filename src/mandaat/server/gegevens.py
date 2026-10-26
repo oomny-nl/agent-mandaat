@@ -46,6 +46,30 @@ DOSSIERS: dict[str, dict[str, Any]] = {
         "stukken": {"offerte witgoed": "aanwezig"},
         "bijlagen": [],
     },
+    # Twee aanvragers met dezelfde naam (scenario 4, "twee Mulders"): Sanne bedoelt 0161,
+    # maar verleent het mandaat per vergissing voor 0162.
+    "2026-0161": {
+        "aanvraag": "Bijzondere bijstand, ingediend 12 oktober 2026",
+        "aanvrager": "P. Mulder, Kastanjelaan (fictief)",
+        "behandelaar": "sanne",
+        "stukken": {
+            "identiteitsbewijs": "aanwezig",
+            "offerte bril": "aanwezig",
+            "inkomensbewijs": "ontbreekt",
+        },
+        "bijlagen": [],
+    },
+    "2026-0162": {
+        "aanvraag": "Bijzondere bijstand, ingediend 14 oktober 2026",
+        "aanvrager": "P. Mulder, Havenstraat (fictief)",
+        "behandelaar": "sanne",
+        "stukken": {
+            "identiteitsbewijs": "aanwezig",
+            "offerte wasmachine": "aanwezig",
+            "inkomensbewijs": "aanwezig",
+        },
+        "bijlagen": [],
+    },
     "2026-0201": {
         "aanvraag": "Levensonderhoud (Participatiewet), ingediend 1 oktober 2026",
         "aanvrager": "M. Visser (fictief)",
@@ -62,7 +86,10 @@ ROLRECHTEN: dict[str, frozenset[str]] = {
 }
 
 MEDEWERKERS: dict[str, dict[str, Any]] = {
-    "sanne": {"rol": "klantmanager", "caseload": {"2026-0142", "2026-0143", "2026-0157"}},
+    "sanne": {
+        "rol": "klantmanager",
+        "caseload": {"2026-0142", "2026-0143", "2026-0157", "2026-0161", "2026-0162"},
+    },
     "bram": {"rol": "intake", "caseload": {"2026-0142", "2026-0143"}},
 }
 

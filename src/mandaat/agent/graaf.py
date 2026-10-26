@@ -4,13 +4,14 @@ De toolknoop haalt voor elke toolactie eerst een eigen gedelegeerd token op met 
 van die tool (de scope staat in de toolmetadata van de MCP-server). Weigert Keycloak het token,
 dan bereikt de aanroep de API niet eens. Weigert de API, dan komt de reden terug als toolfout.
 Een andere fout (netwerk, protocol, onverwachte serverfout) heet geen weigering maar een fout.
+Lokale tools, zoals de vraag aan de medewerker, gaan niet naar de API en krijgen geen token.
 """
 
 from __future__ import annotations
 
 import re
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Annotated, Any
 
 from langchain_core.messages import AnyMessage, HumanMessage, ToolMessage
@@ -25,6 +26,7 @@ from mandaat.agent.planner import Planner
 from mandaat.agent.verbinding import AgentAuth
 
 Waarnemer = Callable[[dict[str, Any]], None]
+LokaleTool = Callable[[dict[str, Any]], str]
 
 
 class Toestand(BaseModel):
@@ -44,6 +46,7 @@ class Gereedschap:
         subject_token: Subject token van de medewerker.
         toolscopes: Toolnaam naar vereiste scope (uit de MCP-toolmetadata).
         waarnemer: Ontvangt gebeurtenissen voor de vertelling in de demo.
+        lokaal: Lokale tools (toolnaam naar functie), buiten de dossier-API om.
     """
 
     client: Client
@@ -52,6 +55,7 @@ class Gereedschap:
     subject_token: str
     toolscopes: dict[str, str]
     waarnemer: Waarnemer
+    lokaal: dict[str, LokaleTool] = field(default_factory=dict)
 
     def token_voor(self, naam: str) -> GedelegeerdToken:
         """Haal een gedelegeerd token op voor één aanroep van deze tool."""
@@ -65,6 +69,8 @@ class Gereedschap:
         token: GedelegeerdToken | None = None,
     ) -> ToolMessage:
         """Voer één toolaanroep uit met een eigen token (of een vooraf opgehaald token)."""
+        if naam in self.lokaal:
+            return self._lokaal(naam, argumenten, oproep_id)
         dossier = str(argumenten.get("dossier", ""))
         extra = {"dossier": dossier}
         scope = self.toolscopes.get(naam, "")
@@ -108,6 +114,15 @@ class Gereedschap:
             name=naam,
             status="error" if fout_ else "success",
             additional_kwargs=extra,
+        )
+
+    def _lokaal(self, naam: str, argumenten: dict[str, Any], oproep_id: str) -> ToolMessage:
+        """Een lokale tool: een vraag aan de medewerker, zonder token en zonder API."""
+        self.waarnemer({"soort": "vraag", "tool": naam, "argumenten": argumenten})
+        antwoord = self.lokaal[naam](argumenten)
+        self.waarnemer({"soort": "antwoord", "tool": naam, "tekst": antwoord})
+        return ToolMessage(
+            antwoord, tool_call_id=oproep_id, name=naam, additional_kwargs={"dossier": ""}
         )
 
 

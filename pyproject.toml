@@ -26,6 +26,7 @@ llm = ["langchain-openai==1.7.2"]
 mandaat-server = "mandaat.server.app:main"
 mandaat-bootstrap = "mandaat.bootstrap.keycloak:main"
 mandaat-demo = "mandaat.demo:main"
+mandaat-meting = "mandaat.meting:main"
 
 [dependency-groups]
 dev = [
