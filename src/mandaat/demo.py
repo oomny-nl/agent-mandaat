@@ -1,8 +1,9 @@
-"""Demoregie: drie scenario's met vertelling, daarna de bewijstabel uit het auditlog.
+"""Demoregie: vier scenario's met vertelling, daarna de bewijstabel uit het auditlog.
 
 De regie speelt drie rollen: medewerker Sanne (via de werkplek), de dossierassistent (de agent)
 en, in scenario 3, de functioneel beheerder (noodstop via de Keycloak Admin API). Alleen die
-laatste rol gebruikt beheerrechten.
+laatste rol gebruikt beheerrechten. Scenario 4 laat zien wat identity niet kan tegenhouden: een
+vergissing van de mens bij het delegeren.
 """
 
 from __future__ import annotations
@@ -24,11 +25,21 @@ from rich.table import Table
 
 from mandaat.agent.graaf import Gereedschap, bouw_graaf, toolscopes, voer_opdracht_uit
 from mandaat.agent.makelaar import Makelaar, MandaatGeweigerd, ontdek
-from mandaat.agent.planner import Planner, deterministische_planner, llm_planner
+from mandaat.agent.planner import (
+    SYSTEEMPROMPT,
+    TWIJFELREGEL,
+    VRAAGTOOL,
+    Planner,
+    deterministische_planner,
+    doorzetter,
+    llm_planner,
+    vrager,
+)
 from mandaat.agent.verbinding import verbind
 from mandaat.bootstrap.keycloak import admin_client
 from mandaat.config import Instellingen
 from mandaat.geheimen import Geheimen
+from mandaat.mulder import BEDOELD, OPDRACHT, VERGISSING, antwoord_van_sanne, werkplekopdracht
 from mandaat.server.opslag import controleer_tegen_anker, lees_anker
 from mandaat.werkplek.sessie import Werkplek
 
@@ -63,17 +74,26 @@ class DemoAfwijking(RuntimeError):
     """Een scenario gaf een andere uitkomst dan het ontwerp voorschrijft."""
 
 
-def verwacht(scenario: str, verwachtingen: list[tuple[str, str]]) -> None:
+def verwacht(
+    scenario: str,
+    verwachtingen: list[tuple[str, str]],
+    verboden: tuple[tuple[str, str], ...] = (),
+) -> None:
     """Controleer dat de gebeurtenissen van een scenario de verwachte uitkomsten bevatten.
 
     Args:
         scenario: Naam voor de foutmelding.
         verwachtingen: Paren (soort, tekstfragment), in volgorde.
+        verboden: Paren (soort, tekstfragment) die nergens in het scenario mogen voorkomen.
 
     Raises:
-        DemoAfwijking: Als een verwachte uitkomst ontbreekt of in de verkeerde volgorde staat.
+        DemoAfwijking: Als een verwachte uitkomst ontbreekt of in de verkeerde volgorde staat, of
+            als een verboden gebeurtenis voorkomt.
     """
     gezien = [(g["soort"], json.dumps(g, ensure_ascii=False)) for g in GEBEURTENISSEN]
+    for soort, fragment in verboden:
+        if any(s == soort and fragment in tekst for s, tekst in gezien):
+            raise DemoAfwijking(f"{scenario}: {soort} met '{fragment}' hoort hier niet")
     positie = 0
     for soort, fragment in verwachtingen:
         while positie < len(gezien) and not (
@@ -115,6 +135,17 @@ def waarnemer(gebeurtenis: dict[str, Any]) -> None:
         zeg("Keycloak", f"WEIGERT token voor {gebeurtenis['scope']}: {uitleg}", "bold red")
     elif soort in ("api_weigert", "api_fout"):
         zeg("dossier-API", *_api_melding(soort, gebeurtenis["tekst"]))
+    else:
+        _vertel_inhoud(gebeurtenis)
+
+
+def _vertel_inhoud(gebeurtenis: dict[str, Any]) -> None:
+    """Vertel een toegestaan resultaat, of een vraag aan Sanne en haar antwoord."""
+    soort = gebeurtenis["soort"]
+    if soort == "vraag":
+        zeg("assistent", f"vraagt Sanne: {gebeurtenis['argumenten'].get('vraag', '')}", "yellow")
+    elif soort == "antwoord":
+        zeg("Sanne", gebeurtenis["tekst"])
     elif soort == "resultaat":
         tekst = gebeurtenis["tekst"]
         if tekst.startswith("{"):
@@ -175,13 +206,18 @@ class Regie:
 
 
 async def _met_agent(
-    regie: Regie, werkplek: Werkplek, stack: AsyncExitStack
+    regie: Regie,
+    werkplek: Werkplek,
+    stack: AsyncExitStack,
+    lokaal: dict[str, Any] | None = None,
 ) -> tuple[Gereedschap, list[dict[str, Any]]]:
     client, auth = await stack.enter_async_context(
         verbind(regie.makelaar, werkplek.subject_token())
     )
     scopes, functies = await toolscopes(client)
-    gereedschap = Gereedschap(client, auth, regie.makelaar, auth.subject_token, scopes, waarnemer)
+    gereedschap = Gereedschap(
+        client, auth, regie.makelaar, auth.subject_token, scopes, waarnemer, lokaal or {}
+    )
     return gereedschap, functies
 
 
@@ -304,6 +340,84 @@ async def scenario_noodstop(regie: Regie) -> None:
     )
 
 
+def mulderplanner(functies: list[dict[str, Any]], vraagt: bool) -> Planner:
+    """Planner voor scenario 4: zonder of met de vraag aan de medewerker.
+
+    Deterministisch zijn dat de doorzetter en de vrager. Met `PLANNER=llm` is het hetzelfde model,
+    eenmaal zonder vraag-tool en eenmaal met vraag-tool en twijfelregel: het verschil zit in het
+    agentontwerp, niet in het model.
+    """
+    if deterministisch():
+        return vrager if vraagt else doorzetter
+    if vraagt:
+        return llm_planner([*functies, VRAAGTOOL], SYSTEEMPROMPT + TWIJFELREGEL)
+    return llm_planner(functies)
+
+
+async def _mulderopdracht(regie: Regie, werkplek: Werkplek, dossier: str, vraagt: bool) -> None:
+    lokaal = {"vraag_medewerker": lambda _: antwoord_van_sanne(dossier)} if vraagt else {}
+    async with AsyncExitStack() as stack:
+        gereedschap, functies = await _met_agent(regie, werkplek, stack, lokaal)
+        graaf = bouw_graaf(mulderplanner(functies, vraagt), gereedschap)
+        await voer_opdracht_uit(graaf, werkplekopdracht(dossier))
+
+
+def _gezien(soort: str, fragment: str = "") -> bool:
+    return any(
+        g["soort"] == soort and fragment in json.dumps(g, ensure_ascii=False)
+        for g in GEBEURTENISSEN
+    )
+
+
+async def _doorzetter_in_vergissing(regie: Regie, sanne: Werkplek) -> None:
+    console.print("[bold]a. Een assistent die doorzet[/bold]")
+    await _mulderopdracht(regie, sanne, VERGISSING, vraagt=False)
+    if _gezien("resultaat", f"toegevoegd aan {VERGISSING}"):
+        zeg(
+            "controle",
+            f"toegestaan, maar fout: in {VERGISSING} is het inkomensbewijs er al",
+            "bold yellow",
+        )
+    else:
+        zeg("controle", f"geen notitie in {VERGISSING}", "green")
+    if deterministisch():
+        verwacht(
+            "scenario 4a",
+            [("resultaat", "dossier_lezen"), ("resultaat", f"toegevoegd aan {VERGISSING}")],
+        )
+    GEBEURTENISSEN.clear()
+
+
+async def scenario_vergissing(regie: Regie) -> None:
+    """Scenario 4: Sanne verleent het mandaat voor de verkeerde P. Mulder; de API laat het toe."""
+    console.rule("[bold]4. Vergissing in de delegatie: twee aanvragers P. Mulder")
+    sanne = regie.werkplek()
+    zeg("Sanne", f"bedoelt Mulder, Kastanjelaan ({BEDOELD}); opent per vergissing {VERGISSING}")
+    mandaat = regie.verleen(sanne, VERGISSING)
+    zeg("Sanne", f"opdracht: {OPDRACHT}")
+    await _doorzetter_in_vergissing(regie, sanne)
+    console.print("[bold]b. Een assistent die vraagt bij een tegenspraak[/bold]")
+    await _mulderopdracht(regie, sanne, VERGISSING, vraagt=True)
+    vroeg = _gezien("vraag")
+    if deterministisch():
+        verwacht(
+            "scenario 4b",
+            [("resultaat", "dossier_lezen"), ("antwoord", BEDOELD)],
+            verboden=(("aanroep", "notitie_toevoegen"),),
+        )
+    GEBEURTENISSEN.clear()
+    sanne.trek_in(mandaat["id"])
+    if vroeg:
+        zeg("Sanne", f"trekt het mandaat in en verleent een nieuw voor {BEDOELD}")
+        mandaat = regie.verleen(sanne, BEDOELD)
+        await _mulderopdracht(regie, sanne, BEDOELD, vraagt=True)
+        if deterministisch():
+            verwacht("scenario 4b", [("resultaat", f"toegevoegd aan {BEDOELD}")])
+        GEBEURTENISSEN.clear()
+        sanne.trek_in(mandaat["id"])
+    zeg("les", "identity begrenst wat de assistent kan, niet of het klopt", "bold")
+
+
 def _rij(record: dict[str, Any]) -> tuple[str, ...]:
     tijd = datetime.fromisoformat(record["tijd"]).astimezone().strftime("%H:%M:%S")
     gebruiker = record.get("gebruiker") or "?"
@@ -370,6 +484,7 @@ async def hoofd() -> None:
     await scenario_buiten_mandaat(regie)
     await scenario_ingetrokken(regie)
     await scenario_noodstop(regie)
+    await scenario_vergissing(regie)
     bewijstabel(inst)
 
 

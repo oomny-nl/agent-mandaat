@@ -96,6 +96,13 @@ def test_llm_planner_stuurt_echte_schemas_en_leest_tool_calls(model: str) -> Non
     assert verzoek["model"] == "nep-model"
     assert verzoek["tools"][0]["function"]["parameters"]["required"] == ["dossier"]
     assert verzoek["messages"][0]["role"] == "system"
+    assert "temperature" not in verzoek  # redeneermodellen weigeren een afwijkende waarde
+
+
+def test_llm_planner_met_eigen_systeemprompt(model: str) -> None:
+    ONTVANGEN.clear()
+    llm_planner(TOOLS, "Eigen systeemprompt.")([HumanMessage("Vat dossier 2026-0142 samen.")])
+    assert ONTVANGEN[0]["messages"][0]["content"] == "Eigen systeemprompt."
 
 
 def test_llm_model_behandelt_lege_omgevingsvariabelen_als_niet_gezet(
@@ -107,7 +114,7 @@ def test_llm_model_behandelt_lege_omgevingsvariabelen_als_niet_gezet(
     monkeypatch.setenv("OPENAI_API_KEY", "nep-sleutel-alleen-voor-test")
     model = llm_model()
     assert type(model).__name__ == "ChatOpenAI"
-    assert model.model_name == "gpt-4.1-mini"
+    assert model.model_name == "gpt-5-mini"
     assert str(model.root_client.base_url) == "https://api.openai.com/v1/"
 
 

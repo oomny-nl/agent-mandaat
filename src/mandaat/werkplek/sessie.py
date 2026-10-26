@@ -165,6 +165,9 @@ class Werkplek:
                     "state": state,
                     "resource": self.inst.resource_url,
                     "ui_locales": "nl",
+                    # Elk mandaat opnieuw tonen: zonder dit slaat Keycloak een eerder
+                    # goedgekeurd dossier (taak:...) over op het toestemmingsscherm.
+                    "prompt": "consent",
                 },
             )
             antwoord = browser.post(

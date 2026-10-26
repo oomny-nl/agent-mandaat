@@ -1,4 +1,4 @@
-.PHONY: demo up speel integratie test lint check down opname
+.PHONY: demo up speel meting integratie test lint check down opname
 
 COMPOSE := docker compose --progress quiet
 
@@ -18,6 +18,12 @@ up: .env
 ## speel: speel de scenario's af tegen de draaiende keten
 speel:
 	@$(COMPOSE) run --rm demo
+
+## meting: meetharnas van scenario 4; gratis en deterministisch, of met PLANNER=llm in .env
+# RUNS=9 beperkt het aantal runs (pilot). Runs die al in docs/meting staan, worden overgeslagen.
+meting: up
+	$(COMPOSE) run --rm meting draai $(if $(RUNS),--runs $(RUNS))
+	@$(COMPOSE) run --rm meting analyse
 
 ## integratie: alle integratietests tegen de echte keten
 integratie: .env
