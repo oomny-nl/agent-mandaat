@@ -99,6 +99,24 @@ systeemprompt om bij een tegenspraak eerst te vragen (C). Elke variant krijgt tw
 de opdracht, elk drie keer, tegen de echte keten. De opzet en de hypothesen staan in
 [docs/meting/HYPOTHESEN.md](docs/meting/HYPOTHESEN.md), vastgelegd vóór de eerste betaalde run.
 
+Uitkomst met gpt-5-mini (26-10-2026, 180 runs, $1,01 inclusief diagnose; afgerekende runkosten
+gemiddeld $0,005 per run):
+
+| Variant | Probeert in het verkeerde dossier te schrijven | Vraagt eerst |
+|---|---|---|
+| A, zonder vraag-tool | 55 van 58 | n.v.t. |
+| B, met `vraag_medewerker` | 2 van 59 | 57 van 59 |
+| C, met tool en twijfelregel | 0 van 58 | 58 van 58 |
+
+Hetzelfde model met hetzelfde mandaat probeert zonder vraag-tool bijna altijd in het verkeerde
+dossier te schrijven, en met die tool bijna nooit. Het mandaat gold voor dat dossier, dus de API laat
+die notitie toe (scenario 4a in de demo; in de meting onderschept het harnas haar): het mandaat
+klopte, de opdracht niet. Na Sannes antwoord probeerde de agent in 115 van de 118 runs met een vraag
+het goede dossier te lezen, nog vóór het nieuwe mandaat er was.
+Daar hield de API hem tegen. Vijf runs braken af op een verbroken verbinding en tellen als onbekend;
+de conclusies blijven gelijk als je ze zo ongunstig mogelijk invult. Tabellen, toetsen en
+afwijkingen: [docs/meting/UITKOMSTEN.md](docs/meting/UITKOMSTEN.md).
+
 ```bash
 make meting
 ```
@@ -324,7 +342,7 @@ managed identity aan ("not accepting new customers"), dus de meting liep met
 | `src/mandaat/werkplek/` | Werkplek van de medewerker: login met PKCE en consent, mandaatbeheer |
 | `src/mandaat/bootstrap/` | Inrichting van de realm via de Admin REST API |
 | `entra/` | Terraform en tokenprovider voor Entra Agent ID |
-| `tests/` | 265 unittests, 56 integratietests tegen de echte keten |
+| `tests/` | 268 unittests, 56 integratietests tegen de echte keten |
 | `docs/` | Ontwerp, dreigingsmodel, one-pager, meting van scenario 4 |
 
 Kwaliteit: `ruff`, `ty`, `pytest`, gitleaks en `terraform validate` in CI. Versies zijn exact

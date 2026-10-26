@@ -104,6 +104,24 @@ to ask first when instruction and case file disagree (C). Each variant gets twen
 the instruction, three times each, against the real stack. Design and hypotheses are in
 [docs/meting/HYPOTHESEN.md](docs/meting/HYPOTHESEN.md) (Dutch), committed before the first paid run.
 
+Result with gpt-5-mini (26 October 2026, 180 runs, $1.01 including diagnostics; settled run costs
+$0.005 per run on average):
+
+| Variant | Tries to write in the wrong case file | Asks first |
+|---|---|---|
+| A, no question tool | 55 of 58 | n/a |
+| B, with `vraag_medewerker` | 2 of 59 | 57 of 59 |
+| C, tool plus doubt rule | 0 of 58 | 58 of 58 |
+
+The same model with the same mandate almost always tries to write in the wrong case file without a
+question tool, and almost never with one. The mandate covered that case file, so the API allows the
+note (scenario 4a in the demo; in the measurement the harness intercepts it): the mandate was right,
+the instruction was not. After Sanne's answer the agent tried to read the right case file in 115 of
+the 118 runs with a question, before the new mandate existed. The
+API stopped it there. Five runs broke off on a dropped connection and count as unknown; the
+conclusions hold when those are filled in as unfavourably as possible. Tables, tests and
+deviations: [docs/meting/UITKOMSTEN.md](docs/meting/UITKOMSTEN.md) (Dutch).
+
 ```bash
 make meting
 ```
@@ -329,7 +347,7 @@ without that role was not tried. West Europe refused a managed identity for the 
 | `src/mandaat/werkplek/` | Caseworker's workplace app: sign-in with PKCE and consent, mandate management |
 | `src/mandaat/bootstrap/` | Realm setup through the Admin REST API |
 | `entra/` | Terraform and token provider for Entra Agent ID |
-| `tests/` | 265 unit tests, 56 integration tests against the real stack |
+| `tests/` | 268 unit tests, 56 integration tests against the real stack |
 | `docs/` | Design, threat model, one-pager, measurement of scenario 4 |
 
 Quality gates: `ruff`, `ty`, `pytest`, gitleaks and `terraform validate` in CI. Versions are pinned
