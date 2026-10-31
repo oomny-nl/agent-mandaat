@@ -8,19 +8,19 @@ authors = [{ name = "Michael Owen Meijer", email = "michael@oomny.nl" }]
 requires-python = ">=3.13,<3.14"
 dependencies = [
     "mcp==2.3.0",
-    "httpx2==2.13.1",
-    "langgraph==1.2.16",
-    "langchain-core==1.6.12",
+    "httpx2==2.16.0",
+    "langgraph==1.2.18",
+    "langchain-core==1.7.0",
     "pyjwt[crypto]==2.15.1",
     "cryptography==50.0.2",
-    "starlette==1.8.0",
+    "starlette==1.10.0",
     "uvicorn==0.54.0",
     "pydantic==2.14.1",
     "rich==15.0.0",
 ]
 
 [project.optional-dependencies]
-llm = ["langchain-openai==1.7.2"]
+llm = ["langchain-openai==1.7.3"]
 
 [project.scripts]
 mandaat-server = "mandaat.server.app:main"
@@ -30,13 +30,13 @@ mandaat-meting = "mandaat.meting:main"
 
 [dependency-groups]
 dev = [
-    "pytest==9.1.1",
-    "ruff==0.17.1",
-    "ty==0.0.89",
+    "pytest==9.2.0",
+    "ruff==0.17.3",
+    "ty==0.0.93",
 ]
 
 [build-system]
-requires = ["hatchling==1.32.4"]
+requires = ["hatchling==1.33.0"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
