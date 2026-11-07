@@ -17,7 +17,7 @@ x-app: &app
 
 services:
   keycloak:
-    image: quay.io/keycloak/keycloak:26.8.1@sha256:79c623a22abacf3fe6c00a5fb30f5b7843d717b234033b80995891c06116d244
+    image: quay.io/keycloak/keycloak:26.8.2@sha256:3879c623248408de29a5303178b5816c77e8dfef3890c361f8c0bbeaa979ba3b
     command:
       - start-dev
       - --features=token-exchange-delegation,parameterized-scopes,admin-fine-grained-authz:v2
