@@ -23,9 +23,9 @@ tenant and measured on 19 October 2026 ([results](#keycloak-and-entra-side-by-si
 ![Demo recording: allowed, refused outside the mandate, revoked and kill switch](docs/beeld/demo.gif)
 
 Behind this repository are nearly eight years of identity work for the four largest Dutch
-municipalities: federation, SCIM provisioning and setting up Keycloak (cutover in preparation).
-Michael Owen Meijer ([Oomny B.V.](https://www.oomny.nl)) extends that work to AI agents in [three
-demos](https://github.com/oomny-nl).
+municipalities: federation, SCIM provisioning and Keycloak as the successor to Azure AD B2C (API
+access in production since October 2026). Michael Owen Meijer ([Oomny B.V.](https://www.oomny.nl))
+extends that work to AI agents in [three demos](https://github.com/oomny-nl).
 
 ## The scenario
 
