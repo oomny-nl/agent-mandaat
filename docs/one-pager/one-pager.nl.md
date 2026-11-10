@@ -52,8 +52,9 @@ Entra-kant (op 19-10-2026 in een lab-tenant uitgerold en end-to-end gemeten).
 ## Waarom van mij
 
 Identity en security sinds 2011, bijna acht jaar voor de vier grote gemeenten: federatie, Entra ID,
-de inrichting van Keycloak (cutover in voorbereiding) en de overstap van persoonlijke tokens naar
-managed identities. Sinds 2026 bouw ik AI-agents met tool calling en MCP. Het snijvlak is precies
-waar overheden nu staan: agents toelaten zonder de controle over toegang kwijt te raken.
+Keycloak als opvolger van Azure AD B2C (API-toegang sinds oktober 2026 in productie) en de overstap
+van persoonlijke tokens naar managed identities. Sinds 2026 bouw ik AI-agents met tool calling en
+MCP. Het snijvlak is precies waar overheden nu staan: agents toelaten zonder de controle over
+toegang kwijt te raken.
 
 **Repo:** github.com/oomny-nl/agent-mandaat · **Site:** www.oomny.nl · **Mail:** michael@oomny.nl

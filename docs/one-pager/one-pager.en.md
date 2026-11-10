@@ -52,9 +52,9 @@ Keycloak 26.8 (open source) and Microsoft Entra Agent ID side by side, with Terr
 ## Why me
 
 Identity and security since 2011, nearly eight years for the four largest Dutch municipalities:
-federation, Entra ID, setting up Keycloak (cutover in preparation) and the move from personal access
-tokens to managed identities. Since 2026 I have been building AI agents with tool calling and MCP.
-That intersection is exactly where public organisations are now: admitting agents without losing
-control over access.
+federation, Entra ID, Keycloak as the successor to Azure AD B2C (API access in production since
+October 2026) and the move from personal access tokens to managed identities. Since 2026 I have been
+building AI agents with tool calling and MCP. That intersection is exactly where public
+organisations are now: admitting agents without losing control over access.
 
 **Repo:** github.com/oomny-nl/agent-mandaat · **Site:** www.oomny.nl · **Mail:** michael@oomny.nl
