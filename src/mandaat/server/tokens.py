@@ -157,6 +157,7 @@ class Tokencontrole:
         """Actieve Keycloak-sessies van een medewerker, via de Admin API.
 
         De resource-client heeft daarvoor alleen de rol `view-users`; schrijven kan hij niet.
+        Het token vraagt de scope `kc-admin-api`, die Keycloak sinds 26.8.2 voor de Admin API eist.
 
         Returns:
             Per sessie (`sid`) de clientId's die in die sessie tokens kregen.
@@ -171,6 +172,7 @@ class Tokencontrole:
                     "grant_type": "client_credentials",
                     "client_id": self.inst.resource_url,
                     "client_secret": self._geheim,
+                    "scope": "kc-admin-api",
                 },
                 timeout=10,
             )

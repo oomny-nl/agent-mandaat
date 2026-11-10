@@ -41,7 +41,7 @@ def _controleer(antwoord: httpx2.Response, stap: str) -> httpx2.Response:
     if antwoord.status_code >= 400:
         raise BootstrapFout(
             f"{stap}: HTTP {antwoord.status_code} {antwoord.text[:300]}. "
-            "Controleer of Keycloak 26.8.1 draait met de features uit compose.yaml."
+            "Controleer of Keycloak 26.8.2 draait met de features uit compose.yaml."
         )
     return antwoord
 
@@ -212,6 +212,9 @@ def maak_clients(
             # Service account met alleen view-users: de API controleert vóór een nieuw mandaat dat
             # de Keycloak-sessie van het vorige mandaat echt is beëindigd.
             "serviceAccountsEnabled": True,
+            # Keycloak 26.8.2 eist voor de Admin API de scope `kc-admin-api` (CVE-2026-19688).
+            # Optioneel: alleen het token voor de sessiecontrole krijgt die audience.
+            "optionalClientScopes": ["kc-admin-api"],
         },
     )
     ids[inst.werkplek_id] = _maak_client(
