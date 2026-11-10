@@ -215,6 +215,22 @@ def test_actieve_sessies(controle: Tokencontrole, monkeypatch: pytest.MonkeyPatc
     }
 
 
+def test_sessiecontrole_vraagt_admin_api_scope(
+    controle: Tokencontrole, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Keycloak 26.8.2 weigert de Admin API zonder scope `kc-admin-api` (CVE-2026-19688)."""
+    gevraagd: list[dict[str, str]] = []
+
+    def post(*_a: Any, **k: Any) -> _Antwoord:
+        gevraagd.append(k["data"])
+        return _Antwoord(200, {"access_token": "t"})
+
+    monkeypatch.setattr(httpx2, "post", post)
+    monkeypatch.setattr(httpx2, "get", lambda *a, **k: _Antwoord(200, []))
+    assert controle.actieve_sessies("sub-sanne") == {}
+    assert gevraagd[0]["scope"] == "kc-admin-api"
+
+
 @pytest.mark.parametrize(
     ("inhoud", "status"),
     [

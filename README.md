@@ -50,7 +50,7 @@ kosten.
 make demo
 ```
 
-Dat start Keycloak 26.8.1, richt de realm in, start de dossier-API en speelt vier scenario's af.
+Dat start Keycloak 26.8.2, richt de realm in, start de dossier-API en speelt vier scenario's af.
 Daarna volgt de bewijstabel uit het auditlog. Wijkt een uitkomst af van het ontwerp, dan stopt
 de demo met een foutstatus. `make integratie` draait de 56 integratietests tegen dezelfde keten.
 
@@ -274,7 +274,7 @@ een account zonder die rol is niet geprobeerd. West-Europa nam voor de nieuwe su
 managed identity aan ("not accepting new customers"), dus de meting liep met
 `locatie = "northeurope"`.
 
-| | Keycloak 26.8.1 | Entra Agent ID |
+| | Keycloak 26.8.2 | Entra Agent ID |
 |---|---|---|
 | Identiteit van de agent | Confidential client met service account | Agent identity uit een blueprint, met sponsor |
 | Credential van de agent | `private_key_jwt`, sleutel buiten git | Managed identity als federated identity credential van de blueprint |

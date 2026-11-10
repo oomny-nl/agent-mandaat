@@ -123,7 +123,7 @@ Gevolgen voor het ontwerp:
 
 | Component | Rol | Technologie |
 |---|---|---|
-| Keycloak 26.8.1, digest gepind | Identity provider en STS | Idempotent bootstrapscript via de Admin REST API (realm, clients, scopes, FGAP-permissie, agentsleutel, client policy met de `may-act` executor); markering `realm-ingericht` in de geheimenmap |
+| Keycloak 26.8.2, digest gepind | Identity provider en STS | Idempotent bootstrapscript via de Admin REST API (realm, clients, scopes, FGAP-permissie, agentsleutel, client policy met de `may-act` executor); markering `realm-ingericht` in de geheimenmap |
 | `werkplek` | Inlog medewerker, vraagt delegatie en taak | Public client met PKCE en consent; in de demo een CLI die het login- en consentformulier headless invult, zoals een browser |
 | `dossierassistent` | De agent | Python 3.13, LangGraph, MCP-client; confidential client met `private_key_jwt` en een aparte DPoP-sleutel (beide lokaal gegenereerd, niet in git) |
 | `dossier-mcp` | Beschermde dossier-API als MCP-server | Python MCP SDK, streamable HTTP; resource server en policy enforcement point |
@@ -310,7 +310,9 @@ Uit de codereview, binnen dit ontwerp:
   een nieuw mandaat pas als de Keycloak-sessies van eerdere mandaten van deze medewerker en agent
   aantoonbaar beëindigd zijn. Aanvulling 18-10-2026: ook elke andere werkpleksessie van de medewerker
   moet beëindigd zijn, met of zonder eerder mandaat (sectie 5). De API vraagt dat na via de Admin API met een service account dat
-  alleen `view-users` heeft (gemeten: lezen werkt, schrijven geeft 403). Faalt die vraag: geen
+  alleen `view-users` heeft (gemeten: lezen werkt, schrijven geeft 403). Sinds Keycloak 26.8.2
+  vraagt dat token ook de scope `kc-admin-api`, omdat de Admin API de audience van het token
+  controleert (CVE-2026-19688). Faalt die vraag: geen
   nieuw mandaat. Een nieuwe login in de werkplek beëindigt altijd eerst de oude sessie.
 - Het anker uit sectie 5 is een apart bestand op een eigen volume, met per auditrecord nummer en
   hash. Verificatie vergelijkt keten en anker, zodat ook weggelaten staartrecords opvallen.

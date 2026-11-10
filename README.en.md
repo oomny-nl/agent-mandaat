@@ -49,7 +49,7 @@ cost.
 make demo
 ```
 
-This starts Keycloak 26.8.1, configures the realm, starts the case API and plays four scenarios,
+This starts Keycloak 26.8.2, configures the realm, starts the case API and plays four scenarios,
 followed by an evidence table from the audit log. If an outcome deviates from the design, the demo
 stops with a non-zero exit code. `make integratie` runs the 56 integration tests against the same
 stack.
@@ -281,7 +281,7 @@ token of a Global Administrator did create the blueprint, the principal and the 
 without that role was not tried. West Europe refused a managed identity for the new subscription
 ("not accepting new customers"), so the measurement ran with `locatie = "northeurope"`.
 
-| | Keycloak 26.8.1 | Entra Agent ID |
+| | Keycloak 26.8.2 | Entra Agent ID |
 |---|---|---|
 | Agent identity | Confidential client with a service account | Agent identity from a blueprint, with a sponsor |
 | Agent credential | `private_key_jwt`, key kept out of git | Managed identity as federated identity credential of the blueprint |

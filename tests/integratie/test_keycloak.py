@@ -1,4 +1,4 @@
-"""Gedrag van Keycloak 26.8.1 waarop het ontwerp leunt (ONTWERP.md sectie 3, proeven 1 tot 21)."""
+"""Gedrag van Keycloak 26.8.2 waarop het ontwerp leunt (ONTWERP.md sectie 3, proeven 1 tot 21)."""
 
 from __future__ import annotations
 
