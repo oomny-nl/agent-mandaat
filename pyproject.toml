@@ -9,18 +9,18 @@ requires-python = ">=3.13,<3.14"
 dependencies = [
     "mcp==2.3.0",
     "httpx2==2.16.0",
-    "langgraph==1.2.19",
-    "langchain-core==1.7.4",
+    "langgraph==1.2.20",
+    "langchain-core==1.7.7",
     "pyjwt[crypto]==2.15.1",
     "cryptography==50.0.2",
     "starlette==1.10.0",
     "uvicorn==0.54.0",
-    "pydantic==2.14.2",
+    "pydantic==2.14.3",
     "rich==15.0.0",
 ]
 
 [project.optional-dependencies]
-llm = ["langchain-openai==1.7.3"]
+llm = ["langchain-openai==1.7.4"]
 
 [project.scripts]
 mandaat-server = "mandaat.server.app:main"
@@ -31,8 +31,8 @@ mandaat-meting = "mandaat.meting:main"
 [dependency-groups]
 dev = [
     "pytest==9.2.0",
-    "ruff==0.17.3",
-    "ty==0.0.97",
+    "ruff==0.17.4",
+    "ty==0.0.100",
 ]
 
 [build-system]
